@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "files": 25,
+  "normalization": "baseline CRLF to LF; text equality, not raw bytes",
+  "patch_sha256": "79a4d9dd8970c755099060c81463ab82fb16b9a7cf868fa3b97bca2ac0761103"
+}

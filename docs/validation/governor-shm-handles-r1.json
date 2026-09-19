@@ -1,0 +1,33 @@
+{
+  "backend_id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+  "samples": [
+    {
+      "at": 1789816757.75174,
+      "processes_scanned": 6,
+      "errors": [],
+      "processes_with_mm_references": [],
+      "host_ipc_named_mm_count": 0,
+      "scope": "Nonzero host named count cannot alone identify this backend as owner"
+    },
+    {
+      "at": 1789816758.7868326,
+      "processes_scanned": 6,
+      "errors": [],
+      "processes_with_mm_references": [],
+      "host_ipc_named_mm_count": 0,
+      "scope": "Nonzero host named count cannot alone identify this backend as owner"
+    },
+    {
+      "at": 1789816759.8274853,
+      "processes_scanned": 6,
+      "errors": [],
+      "processes_with_mm_references": [],
+      "host_ipc_named_mm_count": 0,
+      "scope": "Nonzero host named count cannot alone identify this backend as owner"
+    }
+  ],
+  "scope": "Kernel handles/mappings and named sgl_shm_mm objects only; no Python RID-table, GPU IPC or Python tensor-owner proof. Host IPC names may belong to unrelated services. No unlink, signals or memory reads.",
+  "kernel_reference_observation_complete": true,
+  "no_observed_backend_mm_handles": true,
+  "no_host_named_mm_segments": true
+}

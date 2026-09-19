@@ -1,0 +1,53 @@
+{
+  "changed": [
+    {
+      "path": "sglang/_version.py",
+      "before": {
+        "sha256": "75873921514c0663b19e330eab1f93a0d27e76c2bda20f2eaf2a3b16ce657345",
+        "bytes": 553
+      },
+      "after": {
+        "sha256": "be570ec9574a71d54968d8459acdbc4ac40f00b9a9bac0ebaabb38c90fba770b",
+        "bytes": 553
+      }
+    },
+    {
+      "path": "sglang/srt/entrypoints/http_server.py",
+      "before": {
+        "sha256": "d3b74c12eea9745e11d4e04064155a494166fae9f5fe5a7a61812ff1783b1cd7",
+        "bytes": 108155
+      },
+      "after": {
+        "sha256": "e6e53aa70413271b15d65c22176056face97ebc575b2358c384669f99558b04d",
+        "bytes": 108559
+      }
+    },
+    {
+      "path": "sglang/srt/managers/tokenizer_manager.py",
+      "before": {
+        "sha256": "c031063880fdd52f28923dfe37668321d48d3acafbf867fd06adb81bf8e878da",
+        "bytes": 167923
+      },
+      "after": {
+        "sha256": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f",
+        "bytes": 168701
+      }
+    },
+    {
+      "path": "sglang/srt/observability/req_time_stats.py",
+      "before": {
+        "sha256": "a5cf20279cff6ad26abb4edf73ab8cd299e47545c733e9e22922e31e881985ef",
+        "bytes": 47104
+      },
+      "after": {
+        "sha256": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+        "bytes": 48055
+      }
+    }
+  ],
+  "unchanged_files": 4549,
+  "old_module_files": 4553,
+  "new_module_files": 4553,
+  "unchanged_dependencies_governor_tail_launcher": true,
+  "scope": "Pinned installed component inventories; dist-info metadata excluded from module comparison"
+}

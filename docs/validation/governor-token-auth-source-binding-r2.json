@@ -1,0 +1,87 @@
+{
+  "runtime_and_auth_tests_match": true,
+  "report_sha256": "1d47c2581aa3dd11a28652bf33725153bb9a14a3103a98257d22387ba2892415",
+  "total_tests": 88,
+  "n2_test_difference": "git diff confirms only import unittest plus appended __main__ unittest.main(verbosity=2); canonical test body executed via discovery",
+  "n2_current_test_cpu_report_sha256": "968c1ceb48aaa9981368ee3c46190049273256cb5949dc257a9f6ded649dffad",
+  "files": [
+    {
+      "path": "python/sglang/srt/arg_groups/token_auth.py",
+      "validated_sha256": "8097ff2194fb744daefd570642776dd3cf8b66906527689f5ef12205827e3ea2",
+      "current_sha256": "8097ff2194fb744daefd570642776dd3cf8b66906527689f5ef12205827e3ea2",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/arg_groups/fields/serving.py",
+      "validated_sha256": "03a721ad490804617ea252b1b96489e3504cb8b73a6f8ed7182ad40d4328fdf6",
+      "current_sha256": "03a721ad490804617ea252b1b96489e3504cb8b73a6f8ed7182ad40d4328fdf6",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/arg_groups/pipeline.py",
+      "validated_sha256": "fb97d89a548000ad77c210f14db55ea88276b76b0802c922f59a0775f366a5c4",
+      "current_sha256": "fb97d89a548000ad77c210f14db55ea88276b76b0802c922f59a0775f366a5c4",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/arg_groups/resolution_hooks.py",
+      "validated_sha256": "786c44a12d09f8f6790a878d52de3beae813f2ad504e53a839f3122f27934c91",
+      "current_sha256": "786c44a12d09f8f6790a878d52de3beae813f2ad504e53a839f3122f27934c91",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/server_args.py",
+      "validated_sha256": "4d14d4c96f934adda02e2854bed92a96bfd4f0a348ec055eb53530ba3420dbef",
+      "current_sha256": "4d14d4c96f934adda02e2854bed92a96bfd4f0a348ec055eb53530ba3420dbef",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/engine.py",
+      "validated_sha256": "6730b8060ffe7d4a21cc696d2729a7ebc9c767a6b72d0db07caddee68847ab4c",
+      "current_sha256": "6730b8060ffe7d4a21cc696d2729a7ebc9c767a6b72d0db07caddee68847ab4c",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/grpc_bridge.py",
+      "validated_sha256": "1a381bf9203f065de750ad15c7cf5da58e836796ff24bd181b130ff9d89ad6df",
+      "current_sha256": "1a381bf9203f065de750ad15c7cf5da58e836796ff24bd181b130ff9d89ad6df",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/http_server.py",
+      "validated_sha256": "b4a433d97b6feb6d375bd063cb61e46dcb36930fd5a51ba1bf9e235bce314de3",
+      "current_sha256": "b4a433d97b6feb6d375bd063cb61e46dcb36930fd5a51ba1bf9e235bce314de3",
+      "match": true
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_manager.py",
+      "validated_sha256": "b88a51dd13973c455216893086ac40aef0d6328588e05236ff84c46c6859d37a",
+      "current_sha256": "b88a51dd13973c455216893086ac40aef0d6328588e05236ff84c46c6859d37a",
+      "match": true
+    },
+    {
+      "path": "test/registered/unit/utils/test_token_env_auth.py",
+      "validated_sha256": "72df8b3f5bf6b63430eeccfbc8cc35aae625cd002b27bc250aae06ee75320443",
+      "current_sha256": "72df8b3f5bf6b63430eeccfbc8cc35aae625cd002b27bc250aae06ee75320443",
+      "match": true
+    },
+    {
+      "path": "test/registered/unit/managers/test_parallel_sampling_owner_lifecycle.py",
+      "validated_sha256": "3c7f36bb7deb9b1d0acd4e623c00e7dbac2279a60fbc6256bf5a398a4add004a",
+      "current_sha256": "1e7d387e3a0fe982f1ec02970ab055a85a250508178683f619fa62697a243ed3",
+      "match": false
+    },
+    {
+      "path": "python/sglang/srt/observability/req_time_stats.py",
+      "validated_sha256": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+      "current_sha256": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+      "match": true
+    },
+    {
+      "path": "test/registered/unit/observability/test_queue_time_retract.py",
+      "validated_sha256": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9",
+      "current_sha256": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9",
+      "match": true
+    }
+  ]
+}

@@ -1,0 +1,2231 @@
+--- a/python/sglang/srt/constrained/reasoner_grammar_backend.py
++++ b/python/sglang/srt/constrained/reasoner_grammar_backend.py
+@@ -81,6 +81,13 @@
+ 
+     def _is_generation(self):
+         return self.tokens_after_end >= 0
++
++    @property
++    def vocab_mask_is_unconstrained(self):
++        # Forward generation cannot re-enter thinking. Speculative DFS may
++        # still run for its state bookkeeping, but every descendant mask is
++        # also an identity mask. Re-evaluate after any explicit rollback.
++        return self.grammar is None and self._is_generation()
+ 
+     def transfer_state(self, token: int) -> None:
+         if self._is_thinking():
+--- a/python/sglang/srt/entrypoints/http_server.py
++++ b/python/sglang/srt/entrypoints/http_server.py
+@@ -808,6 +808,16 @@
+     return await server_info()
+ 
+ 
++@app.api_route("/admin/v1/predictive-policy", methods=["GET", "PATCH"])
++@auth_level(AuthLevel.ADMIN_OPTIONAL)
++async def governor_policy(request: Request):
++    if os.environ.get("PIG_GOVERNOR_ENABLE") != "1":
++        raise HTTPException(status_code=404, detail="Governor not enabled")
++    from pig_governor.http import endpoint
++
++    return await endpoint(_global_state.tokenizer_manager, request)
++
++
+ @app.get("/server_info")
+ async def server_info():
+     """The startup configuration, plus live scheduler state.
+--- a/python/sglang/srt/entrypoints/openai/serving_base.py
++++ b/python/sglang/srt/entrypoints/openai/serving_base.py
+@@ -4,14 +4,17 @@
+ import logging
+ import uuid
+ from abc import ABC, abstractmethod
++from contextlib import AsyncExitStack
+ from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+ 
++import anyio
+ import orjson
+ from fastapi import HTTPException, Request
+ from fastapi.responses import ORJSONResponse, StreamingResponse
+ 
+ from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
+ from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
++from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
+ from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
+ from sglang.srt.observability.req_time_stats import monotonic_time
+ from sglang.srt.server_args import ServerArgs
+@@ -20,6 +23,38 @@
+     from sglang.srt.managers.tokenizer_manager import TokenizerManager
+ 
+ logger = logging.getLogger(__name__)
++
++
++class GenerationStreamingResponse(StreamingResponse):
++    """Close owned generators even if ASGI send fails while they are at yield."""
++
++    def __init__(self, content, *, generation=None, **kwargs):
++        super().__init__(content, **kwargs)
++        self.generation = generation
++
++    async def __call__(self, scope, receive, send):
++        try:
++            await super().__call__(scope, receive, send)
++        finally:
++            await self._close_generators()
++
++    async def stream_response(self, send):
++        try:
++            await super().stream_response(send)
++        finally:
++            # Release generation before Starlette runs delayed background tasks.
++            await self._close_generators()
++
++    async def _close_generators(self):
++        # Starlette may cancel the stream's AnyIO scope on disconnect.
++        # Shield awaited cleanup from that scope, then propagate cancellation.
++        with anyio.CancelScope(shield=True):
++            async with AsyncExitStack() as stack:
++                # Close events before generation, even if one close fails or
++                # streaming never starts (for example response.start fails).
++                if self.generation is not None:
++                    stack.push_async_callback(self.generation.aclose)
++                stack.push_async_callback(self.body_iterator.aclose)
+ 
+ 
+ # Base class for specific endpoint handlers
+@@ -226,6 +261,50 @@
+             code=status_code,
+         )
+         return json.dumps({"error": error.model_dump()})
++
++    async def _first_generated_response(self, adapted_request, raw_request):
++        generator = self.tokenizer_manager.generate_request(
++            adapted_request, raw_request
++        )
++        try:
++            return await await_response_or_disconnect(
++                generator.__anext__(),
++                raw_request,
++                background=getattr(adapted_request, "background", False),
++            )
++        finally:
++            await generator.aclose()
++
++    async def _streaming_response_before_headers(
++        self, generator, adapted_request, raw_request
++    ):
++        try:
++            first_chunk = await await_response_or_disconnect(
++                generator.__anext__(),
++                raw_request,
++                background=getattr(adapted_request, "background", False),
++            )
++        except ValueError as exc:
++            await generator.aclose()
++            return self.create_error_response(str(exc))
++        except BaseException:
++            await generator.aclose()
++            raise
++
++        async def prepend_first_chunk():
++            try:
++                yield first_chunk
++                async for chunk in generator:
++                    yield chunk
++            finally:
++                await generator.aclose()
++
++        return GenerationStreamingResponse(
++            prepend_first_chunk(),
++            generation=generator,
++            media_type="text/event-stream",
++            background=self.tokenizer_manager.create_abort_task(adapted_request),
++        )
+ 
+     def extract_custom_labels(self, raw_request):
+         if (
+--- a/python/sglang/srt/entrypoints/openai/serving_chat.py
++++ b/python/sglang/srt/entrypoints/openai/serving_chat.py
+@@ -1897,23 +1897,8 @@
+         """Handle streaming chat completion request"""
+         generator = self._generate_chat_stream(adapted_request, request, raw_request)
+ 
+-        # Kick-start the generator to trigger validation before HTTP 200 is sent.
+-        # If validation fails (e.g., context length exceeded), we can still return
+-        # a proper HTTP 400 error response instead of streaming it as SSE payload.
+-        try:
+-            first_chunk = await generator.__anext__()
+-        except ValueError as e:
+-            return self.create_error_response(str(e))
+-
+-        async def prepend_first_chunk():
+-            yield first_chunk
+-            async for chunk in generator:
+-                yield chunk
+-
+-        return StreamingResponse(
+-            prepend_first_chunk(),
+-            media_type="text/event-stream",
+-            background=self.tokenizer_manager.create_abort_task(adapted_request),
++        return await self._streaming_response_before_headers(
++            generator, adapted_request, raw_request
+         )
+ 
+     async def _generate_chat_stream(
+@@ -1948,15 +1933,16 @@
+         video_tokens = {}
+ 
+         stream_started = False
++        generator = self.tokenizer_manager.generate_request(
++            adapted_request, raw_request
++        )
+         try:
+             include_usage, continuous_usage_stats = should_include_usage(
+                 request.stream_options,
+                 self.tokenizer_manager.server_args.stream_response_default_include_usage,
+             )
+ 
+-            async for content in self.tokenizer_manager.generate_request(
+-                adapted_request, raw_request
+-            ):
++            async for content in generator:
+                 index = content.get("index", 0)
+ 
+                 prompt_tokens[index] = self._reported_prompt_tokens(
+@@ -2179,6 +2165,8 @@
+                 raise
+             error = self.create_streaming_error_response(str(e))
+             yield f"data: {error}\n\n"
++        finally:
++            await generator.aclose()
+ 
+         yield "data: [DONE]\n\n"
+ 
+@@ -2190,9 +2178,7 @@
+     ) -> Union[ChatCompletionResponse, ErrorResponse, ORJSONResponse]:
+         """Handle non-streaming chat completion request"""
+         try:
+-            ret = await self.tokenizer_manager.generate_request(
+-                adapted_request, raw_request
+-            ).__anext__()
++            ret = await self._first_generated_response(adapted_request, raw_request)
+         except ValueError as e:
+             return self.create_error_response(str(e))
+ 
+--- a/python/sglang/srt/entrypoints/openai/serving_completions.py
++++ b/python/sglang/srt/entrypoints/openai/serving_completions.py
+@@ -201,21 +201,8 @@
+             adapted_request, request, raw_request
+         )
+ 
+-        # Kick-start the generator to trigger validation before HTTP 200 is sent.
+-        try:
+-            first_chunk = await generator.__anext__()
+-        except ValueError as e:
+-            return self.create_error_response(str(e))
+-
+-        async def prepend_first_chunk():
+-            yield first_chunk
+-            async for chunk in generator:
+-                yield chunk
+-
+-        return StreamingResponse(
+-            prepend_first_chunk(),
+-            media_type="text/event-stream",
+-            background=self.tokenizer_manager.create_abort_task(adapted_request),
++        return await self._streaming_response_before_headers(
++            generator, adapted_request, raw_request
+         )
+ 
+     async def _generate_completion_stream(
+@@ -243,15 +230,16 @@
+         spec_tokens_details = {}
+ 
+         stream_started = False
++        generator = self.tokenizer_manager.generate_request(
++            adapted_request, raw_request
++        )
+         try:
+             include_usage, continuous_usage_stats = should_include_usage(
+                 request.stream_options,
+                 self.tokenizer_manager.server_args.stream_response_default_include_usage,
+             )
+ 
+-            async for content in self.tokenizer_manager.generate_request(
+-                adapted_request, raw_request
+-            ):
++            async for content in generator:
+                 index = content.get("index", 0)
+ 
+                 text = content["text"]
+@@ -496,6 +484,8 @@
+                 raise
+             error = self.create_streaming_error_response(str(e))
+             yield f"data: {error}\n\n"
++        finally:
++            await generator.aclose()
+ 
+         yield "data: [DONE]\n\n"
+ 
+@@ -507,10 +497,7 @@
+     ) -> Union[CompletionResponse, ErrorResponse, ORJSONResponse]:
+         """Handle non-streaming completion request"""
+         try:
+-            generator = self.tokenizer_manager.generate_request(
+-                adapted_request, raw_request
+-            )
+-            ret = await generator.__anext__()
++            ret = await self._first_generated_response(adapted_request, raw_request)
+         except ValueError as e:
+             return self.create_error_response(str(e))
+ 
+--- a/python/sglang/srt/entrypoints/openai/serving_responses.py
++++ b/python/sglang/srt/entrypoints/openai/serving_responses.py
+@@ -8,14 +8,14 @@
+ import json
+ import logging
+ import time
+-from contextlib import AsyncExitStack
++from contextlib import AsyncExitStack, aclosing
+ from http import HTTPStatus
+ from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Optional, Union
+ 
+ import jinja2
+ import openai.types.responses as openai_responses_types
+ import orjson
+-from fastapi import Request
++from fastapi import HTTPException, Request
+ from fastapi.responses import ORJSONResponse
+ from openai.types.responses import (
+     ResponseOutputMessage,
+@@ -66,9 +66,11 @@
+     Tool,
+     UsageInfo,
+ )
++from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
+ from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
+ from sglang.srt.entrypoints.openai.tool_server import MCPToolServer, ToolServer
+ from sglang.srt.entrypoints.openai.utils import to_openai_style_logprobs
++from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
+ from sglang.srt.function_call.function_call_parser import FunctionCallParser
+ from sglang.srt.function_call.json_array_parser import JsonArrayParser
+ from sglang.srt.managers.io_struct import GenerateReqInput
+@@ -235,7 +237,7 @@
+         self,
+         request: ResponsesRequest,
+         raw_request: Optional[Request] = None,
+-    ) -> Union[AsyncGenerator[str, None], ResponsesResponse, ORJSONResponse]:
++    ) -> Union[GenerationStreamingResponse, ResponsesResponse, ORJSONResponse]:
+         # Validate model
+         if not self.tokenizer_manager:
+             return self.create_error_response("Model not loaded")
+@@ -520,7 +522,7 @@
+ 
+             if request.stream:
+                 if self.use_harmony:
+-                    return self.responses_stream_generator(
++                    events = self.responses_stream_generator(
+                         request,
+                         sampling_params,
+                         result_generator,
+@@ -530,14 +532,23 @@
+                         request_metadata,
+                         require_reasoning=require_reasoning,
+                     )
+-                return self.responses_stream_generator_non_harmony(
+-                    request,
+-                    sampling_params,
+-                    result_generator,
+-                    model_name,
+-                    tokenizer,
+-                    request_metadata,
+-                    require_reasoning=require_reasoning,
++                else:
++                    events = self.responses_stream_generator_non_harmony(
++                        request,
++                        sampling_params,
++                        result_generator,
++                        model_name,
++                        tokenizer,
++                        request_metadata,
++                        require_reasoning=require_reasoning,
++                    )
++                # Responses emits named lifecycle events before model output.
++                # Keep that protocol and explicitly own both generator layers.
++                return GenerationStreamingResponse(
++                    events,
++                    generation=result_generator,
++                    media_type="text/event-stream",
++                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                 )
+             try:
+                 result: Union[ORJSONResponse, ResponsesResponse] = (
+@@ -550,9 +561,12 @@
+                         tokenizer,
+                         request_metadata,
+                         require_reasoning=require_reasoning,
++                        raw_request=raw_request,
+                     )
+                 )
+                 return result
++            except HTTPException as exc:
++                return self.create_error_response(exc.detail, status_code=exc.status_code)
+             except Exception as e:
+                 return self.create_error_response(str(e))
+         return self.create_error_response("Unknown error")
+@@ -628,15 +642,22 @@
+         created_time: Optional[int] = None,
+         *,
+         require_reasoning: bool,
++        raw_request: Optional[Request] = None,
+     ) -> Union[ResponsesResponse, ORJSONResponse]:
+         if created_time is None:
+             created_time = int(time.time())
+ 
++        async def consume_results():
++            async with aclosing(result_generator):
++                async for _ in result_generator:
++                    pass
++
+         try:
+-            async for _ in result_generator:
+-                pass
+-        except asyncio.CancelledError:
+-            return self.create_error_response("Client disconnected")
++            await await_response_or_disconnect(
++                consume_results(), raw_request, background=request.background
++            )
++        except HTTPException as exc:
++            return self.create_error_response(exc.detail, status_code=exc.status_code)
+         except ValueError as e:
+             return self.create_error_response(str(e))
+ 
+@@ -2548,10 +2569,11 @@
+                 adapted_request, raw_request
+             )
+ 
+-            async for res in generator:
+-                context.append_output(res)
+-                # NOTE(woosuk): The stop condition is handled by the engine.
+-                yield context
++            async with aclosing(generator):
++                async for res in generator:
++                    context.append_output(res)
++                    # NOTE(woosuk): The stop condition is handled by the engine.
++                    yield context
+ 
+             if not context.need_builtin_tool_call():
+                 # The model did not ask for a tool call, so we're done.
+--- /dev/null
++++ b/python/sglang/srt/entrypoints/request_disconnect.py
+@@ -0,0 +1,51 @@
++"""One disconnect listener while an HTTP response is still being prepared."""
++
++import asyncio
++
++
++def response_disconnect_watched(request):
++    return bool(
++        getattr(
++            getattr(request, "state", None), "sglang_response_disconnect_watched", False
++        )
++    )
++
++
++async def await_response_or_disconnect(work, request, *, background=False):
++    """Cancel and join pending work before handing receive to StreamingResponse.
++
++    Call only after the endpoint has consumed the request body. Request waiters
++    must not compete with this listener for the disconnect event. The caller
++    retains ownership of its generators and closes them after this await.
++    """
++    if (
++        request is None
++        or background
++        or not hasattr(request, "receive")
++        or response_disconnect_watched(request)
++    ):
++        return await work
++
++    async def disconnected():
++        while True:
++            message = await request.receive()
++            if message["type"] == "http.disconnect":
++                return
++
++    request.state.sglang_response_disconnect_watched = True
++    pending = asyncio.ensure_future(work)
++    monitor = asyncio.create_task(disconnected())
++    try:
++        done, _ = await asyncio.wait(
++            (pending, monitor), return_when=asyncio.FIRST_COMPLETED
++        )
++        if monitor in done:
++            monitor.result()
++            raise ValueError("Request disconnected before the response was ready")
++        return pending.result()
++    finally:
++        for task in (pending, monitor):
++            if not task.done():
++                task.cancel()
++        await asyncio.gather(pending, monitor, return_exceptions=True)
++        request.state.sglang_response_disconnect_watched = False
+--- a/python/sglang/srt/managers/communicator.py
++++ b/python/sglang/srt/managers/communicator.py
+@@ -4,6 +4,7 @@
+ import copy
+ import logging
+ from typing import Callable, Generic, List, Optional, TypeVar
++from uuid import uuid4
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -27,6 +28,7 @@
+         send: Callable[[T], None],
+         fan_out: int,
+         mode: str = "queueing",
++        correlate: bool = False,
+     ):
+         self._send = send
+         self._fan_out = fan_out
+@@ -35,8 +37,12 @@
+         self._result_values: Optional[List[T]] = None
+         self._result_fan_out: Optional[int] = None
+         self._queueing_lock = asyncio.Lock()
++        self._correlate = correlate
++        self._nonce = None
+ 
+         assert mode in ["queueing", "watching"]
++        if correlate and mode != "queueing":
++            raise ValueError("Correlated control requires queueing mode")
+ 
+     async def queueing_call(self, obj: T):
+         # asyncio.Lock is FIFO-fair: a new caller cannot acquire while earlier
+@@ -44,17 +50,20 @@
+         # arrival order. It also releases on exception/cancellation, so a
+         # failed caller never blocks the callers queued behind it.
+         async with self._queueing_lock:
+-            if obj is not None:
+-                self._send(obj)
+-
+             self._result_event = asyncio.Event()
+             self._result_values = []
+             self._result_fan_out = self._fan_out
+-            await self._result_event.wait()
+-            result_values = self._result_values
+-            self._result_event = self._result_values = None
+-            self._result_fan_out = None
+-            return result_values
++            self._nonce = uuid4().hex if self._correlate else None
++            try:
++                if obj is not None:
++                    if self._correlate:
++                        obj.control_nonce = self._nonce
++                    self._send(obj)
++                await self._result_event.wait()
++                return self._result_values
++            finally:
++                self._result_event = self._result_values = None
++                self._result_fan_out = self._nonce = None
+ 
+     async def watching_call(self, obj):
+         if self._result_event is None:
+@@ -88,6 +97,10 @@
+         self._fan_out = fan_out
+ 
+     def handle_recv(self, recv_obj: T):
++        if self._correlate and (
++            self._nonce is None or getattr(recv_obj, "control_nonce", None) != self._nonce
++        ):
++            return
+         if (
+             self._result_values is None
+             or self._result_event is None
+--- a/python/sglang/srt/managers/io_struct.py
++++ b/python/sglang/srt/managers/io_struct.py
+@@ -2085,7 +2085,7 @@
+ 
+ 
+ class GetInternalStateReq(BaseReq, kw_only=True):
+-    pass
++    control_nonce: Optional[str] = None
+ 
+ 
+ class GetInternalStateReqOutput(BaseReq, kw_only=True):
+@@ -2093,15 +2093,18 @@
+     # producer sanitizes it with msgspec_to_builtins so every value is
+     # msgpack-native.
+     internal_state: Dict[str, Any]
++    control_nonce: Optional[str] = None
+ 
+ 
+ class SetInternalStateReq(BaseReq, kw_only=True):
+-    # Only numeric scheduler knobs are accepted (see Scheduler.set_internal_state).
+-    server_args: Dict[str, Union[int, float]]
++    # Numeric knobs or a namespaced extension payload; scheduler validates keys.
++    server_args: Dict[str, Union[int, float, Dict[str, Any]]]
++    control_nonce: Optional[str] = None
+ 
+ 
+ class SetInternalStateReqOutput(BaseReq, kw_only=True):
+     updated: bool
++    control_nonce: Optional[str] = None
+ 
+ 
+ class ProfileReqType(Enum):
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -446,6 +446,11 @@
+ 
+         # Parse args
+         self.server_args = server_args
++        self.governor = None
++        if os.environ.get("PIG_GOVERNOR_ENABLE") == "1":
++            from pig_governor.sglang import create
++
++            self.governor = create(server_args)
+         self.nccl_port = port_args.nccl_port
+         self.schedule_policy = get_schedule().schedule_policy
+         self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
+@@ -1251,7 +1256,11 @@
+                 )
+                 self.enable_dynamic_chunking = False
+ 
+-    def _should_defer_prefill(self) -> bool:
++    def _should_defer_prefill(self, running_batch=None) -> bool:
++        if self.governor is not None and self.governor.before_prefill(
++            running_batch, self.waiting_queue, self.chunked_req, time.monotonic()
++        ):
++            return True
+         if self._prefill_decode_interval_remaining == 0:
+             return False
+ 
+@@ -3428,7 +3437,7 @@
+ 
+         if self.dllm_config is not None:
+             new_batch = self.get_new_batch_dllm(running_batch)
+-        elif self._should_defer_prefill():
++        elif self._should_defer_prefill(running_batch):
+             new_batch = None
+         else:
+             prefill_plan = self.get_new_batch_prefill(running_batch)
+@@ -4390,6 +4399,8 @@
+         elif batch.forward_mode.is_idle():
+             self.batch_result_processor.process_batch_result_idle(batch, result)
+ 
++        if self.governor is not None:
++            self.governor.after_result(batch, time.monotonic())
+         self._record_step_counters(batch, result)
+ 
+         self.metrics_reporter.log_batch_result_stats(batch, result)
+@@ -4767,6 +4778,8 @@
+         # Resolved config (pristine server_args + post-publish overrides) so a
+         # readback reflects values changed via /set_internal_state, not startup.
+         ret = get_context().resolved_server_args_dict()
++        if self.governor is not None:
++            ret["pig_governor"] = self.governor.core.snapshot(time.monotonic())
+         ret["world_size"] = compute_world_size(
+             enable_dp_attention=get_parallel().enable_dp_attention,
+             dp_size=get_parallel().dp_size,
+@@ -4822,10 +4835,18 @@
+         # consumes it.
+         ret.pop("custom_sigquit_handler", None)
+ 
+-        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret))
++        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret), control_nonce=recv_req.control_nonce)
+ 
+     def set_internal_state(self, recv_req: SetInternalStateReq):
+         server_args_dict = recv_req.server_args
++        if set(server_args_dict) == {"pig_governor"} and self.governor is not None:
++            from pig_governor.admin import execute
++
++            try:
++                execute(self.governor.core, "patch", time.monotonic(), server_args_dict["pig_governor"])
++                return SetInternalStateReqOutput(updated=True, control_nonce=recv_req.control_nonce)
++            except ValueError:
++                return SetInternalStateReqOutput(updated=False, control_nonce=recv_req.control_nonce)
+         args_allow_update = set(
+             [
+                 "pp_max_micro_batch_size",
+@@ -4902,7 +4923,7 @@
+                 get_context().override(source="update_server_args", **remaining)
+             logger.info(f"Config updated via context override: {remaining}")
+ 
+-        return SetInternalStateReqOutput(updated=if_success)
++        return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
+ 
+     def save_remote_model(self, **kwargs):
+         self.weight_updater.save_remote_model(kwargs)
+@@ -4990,6 +5011,9 @@
+             # This only works for requests that have not started anything.
+             # We still need to send something back to TokenizerManager to clean up the state.
+             req = self.waiting_queue.pop(i)
++            if req.multimodal_inputs is not None and req.session is None:
++                req.multimodal_inputs.release_features()
++                req.multimodal_inputs = None
+             self.beam_coordinator.retire_group(req)
+             if self.enable_hicache_storage:
+                 # to release prefetch events associated with the request
+@@ -5629,6 +5653,10 @@
+ def _make_abort_req(
+     req: Req, finished_reason: Optional[FinishReasonDict] = None
+ ) -> AbortReq:
++    if getattr(req, "governor_progress", None) is not None:
++        from pig_governor.sglang import on_abort_emitted
++
++        on_abort_emitted(req)
+     return AbortReq(
+         rid=req.rid,
+         finished_reason=finished_reason,
+--- a/python/sglang/srt/managers/tokenizer_control_mixin.py
++++ b/python/sglang/srt/managers/tokenizer_control_mixin.py
+@@ -167,6 +167,7 @@
+                 self._dispatch_to_scheduler,
+                 get_parallel().dp_size,
+                 mode,
++                correlate=name in ("get_internal_state", "set_internal_state"),
+             )
+             setattr(self, f"{name}_communicator", comm)
+             dispatch_pairs.append((resp_type, comm.handle_recv))
+--- a/python/sglang/srt/managers/tokenizer_manager.py
++++ b/python/sglang/srt/managers/tokenizer_manager.py
+@@ -29,7 +29,7 @@
+ import time
+ from array import array
+ from collections import deque
+-from contextlib import nullcontext
++from contextlib import aclosing, nullcontext
+ from datetime import datetime
+ from enum import Enum
+ from functools import lru_cache
+@@ -54,6 +54,7 @@
+ from sglang.srt.disaggregation.encoder.receiver import create_mm_receiver
+ from sglang.srt.disaggregation.utils import DisaggregationMode
+ from sglang.srt.environ import envs
++from sglang.srt.entrypoints.request_disconnect import response_disconnect_watched
+ from sglang.srt.lora.lora_registry import LoRARef, LoRARegistry
+ from sglang.srt.managers.async_dynamic_batch_tokenizer import AsyncDynamicbatchTokenizer
+ from sglang.srt.managers.disagg_service import start_disagg_service
+@@ -93,7 +94,7 @@
+     unwrap_from_pickle,
+ )
+ from sglang.srt.managers.load_snapshot import create_load_snapshot_reader
+-from sglang.srt.managers.mm_utils import wrap_shm_features
++from sglang.srt.managers.mm_utils import discard_shm_features, wrap_shm_features
+ from sglang.srt.managers.multimodal_processor import get_mm_processor, import_processors
+ from sglang.srt.managers.schedule_batch import (
+     MultimodalDataItem,
+@@ -835,12 +836,13 @@
+                     if obj.return_prompt_token_ids:
+                         state.prompt_token_ids = list(tokenized_obj.input_ids)
+                     self._send_one_request(tokenized_obj)
+-                    async for response in self._wait_one_response(obj, request):
+-                        yield response
++                    responses = self._wait_one_response(obj, request)
+                 else:
+-                    async for response in self._handle_batch_request(
++                    responses = self._handle_batch_request(
+                         obj, request, request_rids
+-                    ):
++                    )
++                async with aclosing(responses):
++                    async for response in responses:
+                         yield response
+         except BaseException:
+             # _init_req_state created a rid_to_state entry per (sub-)request up
+@@ -1597,6 +1599,11 @@
+         tokenized_obj: Union[TokenizedGenerateReqInput, TokenizedEmbeddingReqInput],
+     ):
+         prepared_mm_items = []
++        # Serialization replaces mm_inputs with bytes. Retain the producer's
++        # mutable MM object so failed dispatch can release any SHM it created.
++        shm_owner = (
++            copy.copy(tokenized_obj) if tokenized_obj.mm_inputs is not None else None
++        )
+         dispatched = False
+         try:
+             prepared_mm_items = self.cuda_vmm_feature_transport.prepare_for_dispatch(
+@@ -1613,7 +1620,13 @@
+             tokenized_obj.time_stats.set_api_server_dispatch_finish_time()
+         finally:
+             if not dispatched:
+-                self.cuda_vmm_feature_transport.cancel_for_dispatch(prepared_mm_items)
++                try:
++                    if shm_owner is not None:
++                        discard_shm_features(shm_owner)
++                finally:
++                    self.cuda_vmm_feature_transport.cancel_for_dispatch(
++                        prepared_mm_items
++                    )
+ 
+     def _mark_state_dispatched(self, rid: str):
+         """Record that *rid* reached the scheduler.
+@@ -1765,6 +1778,7 @@
+                 if (
+                     request is not None
+                     and not obj.background
++                    and not response_disconnect_watched(request)
+                     and await request.is_disconnected()
+                 ):
+                     # Abort the request for disconnected requests (non-streaming, waiting queue)
+@@ -1853,6 +1867,7 @@
+                 if (
+                     request is not None
+                     and not obj.background
++                    and not response_disconnect_watched(request)
+                     and await request.is_disconnected()
+                 ):
+                     # Abort the request for disconnected requests (non-streaming, running)
+@@ -1937,7 +1952,10 @@
+                 self._init_req_state(tmp_obj)
+                 request_rids.add(tmp_obj.rid)
+                 self._send_one_request(tokenized_obj)
+-                await self._wait_one_response(tmp_obj, request).__anext__()
++                async with aclosing(
++                    self._wait_one_response(tmp_obj, request)
++                ) as waiter:
++                    await waiter.__anext__()
+ 
+             # Expand requests, assign new rids for them, and send them
+             for i in range(batch_size):
+@@ -1970,8 +1988,11 @@
+             outputs = await self._collect_batch_responses(generators)
+             yield outputs
+         else:
+-            async for response in self._stream_batch_responses(generators, rids):
+-                yield response
++            async with aclosing(
++                self._stream_batch_responses(generators, rids)
++            ) as stream:
++                async for response in stream:
++                    yield response
+ 
+     async def _collect_batch_responses(self, generators):
+         tasks = [asyncio.create_task(gen.__anext__()) for gen in generators]
+--- a/python/sglang/srt/managers/tp_worker.py
++++ b/python/sglang/srt/managers/tp_worker.py
+@@ -46,6 +46,7 @@
+ from sglang.srt.model_executor.forward_batch_info import (
+     CaptureHiddenMode,
+     ForwardBatch,
++    ForwardMode,
+     PPProxyTensors,
+ )
+ from sglang.srt.model_executor.graph_memory_usage import (
+@@ -599,6 +600,7 @@
+         skip_attn_backend_init: Optional[bool] = None,  # deprecated
+         *,
+         capture_hidden_mode: Optional[CaptureHiddenMode] = None,
++        capture_prefill_extend_metadata: bool = False,
+     ) -> GenerationBatchResult:
+         # Get forward batch from schedule batch
+         if batch is not None:
+@@ -625,6 +627,41 @@
+             return self._forward_batch_generation_dllm(forward_batch, batch)
+ 
+         if self.pp_group.is_last_rank:
++            prefill_extend_metadata = None
++            if (
++                capture_prefill_extend_metadata
++                and batch is not None
++                and not self.enable_overlap
++                and not batch.enable_overlap
++                and get_schedule().disable_overlap_schedule
++                and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
++                and forward_batch.forward_mode
++                in (ForwardMode.EXTEND, ForwardMode.MIXED)
++                and forward_batch.batch_size > 0
++                and isinstance(forward_batch.extend_seq_lens_cpu, list)
++                and isinstance(forward_batch.extend_prefix_lens_cpu, list)
++                and len(forward_batch.extend_seq_lens_cpu) == forward_batch.batch_size
++                and len(forward_batch.extend_prefix_lens_cpu)
++                == forward_batch.batch_size
++                and all(
++                    isinstance(value, torch.Tensor)
++                    and value.is_cuda
++                    and value.dtype == torch.int32
++                    and value.shape == (forward_batch.batch_size,)
++                    and value.device == forward_batch.seq_lens.device
++                    for value in (
++                        forward_batch.extend_seq_lens,
++                        forward_batch.extend_prefix_lens,
++                    )
++                )
++            ):
++                # Capture fresh init_new tensors before forward can rebind the
++                # fields to padded tensors or graph views. Ordinary extend
++                # consumers read these original tensors without in-place writes.
++                prefill_extend_metadata = (
++                    forward_batch.extend_seq_lens,
++                    forward_batch.extend_prefix_lens,
++                )
+             out = self.model_runner.forward(
+                 forward_batch,
+                 pp_proxy_tensors=pp_proxy_tensors,
+@@ -636,6 +673,7 @@
+                 expert_distribution_metrics=out.expert_distribution_metrics,
+                 routed_experts_output=out.routed_experts_output,
+                 indexer_topk_output=out.indexer_topk_output,
++                prefill_extend_metadata=prefill_extend_metadata,
+             )
+ 
+             capture_pre_sample_logits(batch, forward_batch, logits_output)
+--- a/python/sglang/srt/managers/utils.py
++++ b/python/sglang/srt/managers/utils.py
+@@ -4,7 +4,7 @@
+ import logging
+ import re
+ from dataclasses import dataclass
+-from typing import TYPE_CHECKING, Any, List, Optional, Union
++from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+ 
+ import msgspec
+ import torch
+@@ -92,6 +92,11 @@
+ 
+     # relay path: forward stream -> next step forward
+     next_draft_input: Optional[EagleDraftInput] = None
++
++    # Original per-forward target-prefill metadata, before graph/DP padding.
++    # The same-stream EAGLE prefill consumer takes and clears these references;
++    # they are not scheduler-owned state and must not be copied to the CPU.
++    prefill_extend_metadata: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+ 
+     # Refs the worker wants scheduler to keep alive for the same 2-iter window
+     # as batch_record_buf. Used for cross-stream tensor lifetime (e.g. a spec
+--- a/python/sglang/srt/model_executor/forward_batch_info.py
++++ b/python/sglang/srt/model_executor/forward_batch_info.py
+@@ -727,9 +727,15 @@
+         *,
+         capture_hidden_mode: Optional[CaptureHiddenMode] = None,
+         return_hidden_states_before_norm: bool,
++        extend_metadata: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+     ):
+         # init_new must not mutate the input ScheduleBatch; per-forward
+         # overrides go through explicit keyword arguments.
++        if extend_metadata is not None and (
++            batch.forward_mode.is_decode_or_idle()
++            or batch.forward_mode.is_target_verify()
++        ):
++            raise ValueError("Device extend metadata requires an extend forward")
+ 
+         # capture_hidden_mode=None means no override: capture the server's
+         # configured maximum so lower-mode requests can share one graph.
+@@ -895,19 +901,38 @@
+                 ret.positions = clamp_position(batch.seq_lens)
+         else:
+             if isinstance(extend_seq_lens, list):
+-                # Main path: H2D from host lists; populate *_cpu mirrors.
++                # CPU mirrors remain real host metadata even when a caller
++                # supplies equivalent device lengths for this forward.
+                 assert isinstance(extend_prefix_lens, list)
+-                pin_memory = is_pin_memory_available(device)
+-                ret.extend_seq_lens = torch.tensor(
+-                    extend_seq_lens, dtype=torch.int32, pin_memory=pin_memory
+-                ).to(device, non_blocking=True)
+-                ret.extend_prefix_lens = torch.tensor(
+-                    extend_prefix_lens, dtype=torch.int32, pin_memory=pin_memory
+-                ).to(device, non_blocking=True)
++                if extend_metadata is None:
++                    pin_memory = is_pin_memory_available(device)
++                    ret.extend_seq_lens = torch.tensor(
++                        extend_seq_lens, dtype=torch.int32, pin_memory=pin_memory
++                    ).to(device, non_blocking=True)
++                    ret.extend_prefix_lens = torch.tensor(
++                        extend_prefix_lens, dtype=torch.int32, pin_memory=pin_memory
++                    ).to(device, non_blocking=True)
++                else:
++                    if (
++                        len(extend_seq_lens) != ret.batch_size
++                        or len(extend_prefix_lens) != ret.batch_size
++                        or len(extend_metadata) != 2
++                        or any(
++                            not isinstance(value, torch.Tensor)
++                            or value.shape != (ret.batch_size,)
++                            or value.dtype != torch.int32
++                            or value.device != batch.seq_lens.device
++                            for value in extend_metadata
++                        )
++                    ):
++                        raise ValueError("Invalid per-forward extend metadata")
++                    ret.extend_seq_lens, ret.extend_prefix_lens = extend_metadata
+                 ret.extend_prefix_lens_cpu = extend_prefix_lens
+                 ret.extend_seq_lens_cpu = extend_seq_lens
+             else:
+                 # gpu_only: device tensors handed in directly; leave *_cpu unset.
++                if extend_metadata is not None:
++                    raise ValueError("Device extend inputs cannot also be overridden")
+                 assert isinstance(extend_seq_lens, torch.Tensor)
+                 ret.extend_seq_lens = extend_seq_lens
+                 ret.extend_prefix_lens = extend_prefix_lens
+--- a/python/sglang/srt/sampling/sampling_batch_info.py
++++ b/python/sglang/srt/sampling/sampling_batch_info.py
+@@ -243,7 +243,18 @@
+             return
+ 
+         # Find a grammar from the list
+-        first_grammar = next(grammar for grammar in self.grammars if grammar)
++        first_grammar = next(
++            (
++                grammar
++                for grammar in self.grammars
++                if grammar
++                and getattr(grammar, "vocab_mask_is_unconstrained", False) is not True
++            ),
++            None,
++        )
++        if first_grammar is None:
++            self.grammar_mask = None
++            return
+ 
+         vocab_mask = first_grammar.allocate_vocab_mask(
+             vocab_size=self.vocab_size,
+@@ -256,7 +267,10 @@
+         entries = [
+             GrammarRow(row=row, grammar=grammar)
+             for row, grammar in enumerate(self.grammars)
+-            if grammar and not grammar.finished and not grammar.is_terminated()
++            if grammar
++            and not grammar.finished
++            and not grammar.is_terminated()
++            and getattr(grammar, "vocab_mask_is_unconstrained", False) is not True
+         ]
+         first_grammar.fill_vocab_mask_batched(entries, vocab_mask)
+ 
+--- a/python/sglang/srt/speculative/eagle_worker_common.py
++++ b/python/sglang/srt/speculative/eagle_worker_common.py
+@@ -8,6 +8,7 @@
+     assign_draft_cache_locs_contiguous,
+ )
+ from sglang.kernels.ops.speculative.eagle import fill_bonus_tokens_func
++from sglang.srt.environ import envs
+ from sglang.srt.layers.logprob_processor import compute_spec_logprobs
+ from sglang.srt.managers.utils import GenerationBatchResult
+ from sglang.srt.model_executor.forward_batch_info import (
+@@ -15,6 +16,7 @@
+     ForwardBatch,
+     ForwardMode,
+ )
++from sglang.srt.runtime_context import get_schedule
+ from sglang.srt.speculative.eagle_info import EagleDraftInput, EagleVerifyInput
+ from sglang.srt.speculative.eagle_utils import (
+     TreeMaskMode,
+@@ -125,6 +127,7 @@
+     extend_num_tokens = bs * num_window_tokens
+     # When seq_lens_cpu is absent, stay on GPU-only path -- no .tolist()/.cpu().
+     gpu_only = batch.seq_lens_cpu is None
++    extend_metadata = None
+ 
+     batch.spec_info = draft_extend_input
+     # Do NOT cast predict dtype here. The caller (e.g., _draft_extend_for_decode)
+@@ -164,6 +167,27 @@
+             max(int(x) - front_offset, 0) for x in batch.seq_lens_cpu.tolist()
+         ]
+         batch.extend_lens = [num_window_tokens] * bs
++        if (
++            bs > 0
++            and batch.seq_lens.is_cuda
++            and not batch.enable_overlap
++            and get_schedule().disable_overlap_schedule
++            and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
++        ):
++            # In non-overlap the scheduler updates seq_lens and its CPU mirror
++            # from the same completed result before the next iteration. Target
++            # verify does not rewrite either pre-write length. Build equivalent
++            # metadata on the current forward stream, retaining both CPU lists
++            # for the backends that need them. No new stream/dependency or D2H.
++            extend_metadata = (
++                torch.full(
++                    (bs,),
++                    num_window_tokens,
++                    dtype=torch.int32,
++                    device=batch.seq_lens.device,
++                ),
++                (batch.seq_lens - front_offset).clamp(min=0).to(torch.int32),
++            )
+     batch.extend_num_tokens = extend_num_tokens
+     capture_mode = (
+         CaptureHiddenMode.NULL
+@@ -180,6 +204,7 @@
+         draft_model_runner,
+         capture_hidden_mode=capture_mode,
+         return_hidden_states_before_norm=return_hidden_states_before_norm,
++        **({"extend_metadata": extend_metadata} if extend_metadata is not None else {}),
+     )
+     # Forward sees post-write length (draft extend writes num_draft_tokens
+     # slots); mutation stays on forward_batch to preserve SB.seq_lens.
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -2,7 +2,7 @@
+ import logging
+ import time
+ from dataclasses import replace
+-from typing import List, Optional
++from typing import List, Optional, Tuple
+ 
+ import torch
+ 
+@@ -40,7 +40,11 @@
+     Phase,
+     check_cuda_graph_backend,
+ )
+-from sglang.srt.model_executor.forward_batch_info import CaptureHiddenMode, ForwardBatch
++from sglang.srt.model_executor.forward_batch_info import (
++    CaptureHiddenMode,
++    ForwardBatch,
++    ForwardMode,
++)
+ from sglang.srt.model_executor.forward_context import ForwardContext, forward_context
+ from sglang.srt.model_executor.runner import (
+     DecodeCudaGraphRunner,
+@@ -783,6 +787,8 @@
+         target_hidden_states: torch.Tensor,
+         next_token_ids: torch.Tensor,
+         mm_input_embeds: Optional[torch.Tensor] = None,
++        *,
++        extend_metadata: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+     ):
+         """
+         Run draft model extend to correctly fill the KV cache.
+@@ -792,6 +798,19 @@
+             target_hidden_states: Hidden states from the target model forward
+             next_token_ids: Next token ids generated from the target forward.
+         """
++        if extend_metadata is not None and not (
++            not batch.enable_overlap
++            and get_schedule().disable_overlap_schedule
++            and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
++            and isinstance(batch.extend_lens, list)
++            and isinstance(batch.prefix_lens, list)
++            and len(batch.extend_lens) == len(batch.reqs)
++            and len(batch.prefix_lens) == len(batch.reqs)
++        ):
++            # Some padding paths append CPU mirrors in place. Keep that native
++            # input representation intact and use the original construction.
++            extend_metadata = None
++
+         # Construct input_ids
+         if not batch.forward_mode.is_idle():
+             # Chunked-prefill-aware tail tokens (see PR #26329).
+@@ -829,6 +848,11 @@
+             self.draft_runner,
+             capture_hidden_mode=capture_hidden_mode,
+             return_hidden_states_before_norm=False,
++            **(
++                {"extend_metadata": extend_metadata}
++                if extend_metadata is not None
++                else {}
++            ),
+         )
+         forward_batch.return_logprob = False
+         if mm_input_embeds is not None:
+@@ -1174,11 +1198,28 @@
+                 if self.speculative_algorithm.is_standalone()
+                 else CaptureHiddenMode.FULL
+             )
++            capture_metadata = (
++                self._draft_worker is not None
++                and batch.forward_mode in (ForwardMode.EXTEND, ForwardMode.MIXED)
++                and batch.seq_lens is not None
++                and batch.seq_lens.is_cuda
++                and not batch.enable_overlap
++                and get_schedule().disable_overlap_schedule
++                and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
++            )
+             batch_output = self.target_worker.forward_batch_generation(
+                 batch,
+                 pp_proxy_tensors=pp_proxy_tensors,
+                 capture_hidden_mode=target_capture_mode,
+-            )
++                **(
++                    {"capture_prefill_extend_metadata": True}
++                    if capture_metadata
++                    else {}
++                ),
++            )
++            extend_metadata = getattr(batch_output, "prefill_extend_metadata", None)
++            if extend_metadata is not None:
++                batch_output.prefill_extend_metadata = None
+ 
+             # Spec_v2 convention: batch.seq_lens = length BEFORE this iter's tokens.
+             # Extend processed L prompt tokens; next verify iter expects same L.
+@@ -1207,6 +1248,11 @@
+                         batch_output.logits_output.hidden_states,
+                         batch_output.next_token_ids,
+                         batch_output.logits_output.mm_input_embeds,
++                        **(
++                            {"extend_metadata": extend_metadata}
++                            if extend_metadata is not None
++                            else {}
++                        ),
+                     )
+                 )
+                 return batch_output
+--- a/python/sglang/srt/speculative/spec_utils.py
++++ b/python/sglang/srt/speculative/spec_utils.py
+@@ -632,11 +632,22 @@
+     """
+     if barrier is not None:
+         barrier()
++    mask_is_unconstrained = all(
++        req.grammar is None
++        or getattr(req.grammar, "vocab_mask_is_unconstrained", False) is True
++        for req in reqs
++    )
+     vocab_mask, grammar = generate_token_bitmask(
+         reqs,
+         *tree.resolve(),
+         sampling_info.vocab_size,
+     )
++    # Keep the existing tree resolution and accept/rollback bookkeeping.
++    # An identity mask needs no H2D or logits application. Clear an older
++    # Prefill mask too, including the transition out of constrained thinking.
++    if mask_is_unconstrained:
++        sampling_info.grammar_mask = None
++        return None
+     if vocab_mask is None:
+         return None
+ 
+--- /dev/null
++++ b/test/registered/unit/model_executor/test_draft_extend_device_metadata.py
+@@ -0,0 +1,283 @@
++"""Real draft-extend/ForwardBatch boundary, including retained CPU mirrors.
++
++CPU tests tag CPU storage as CUDA only to exercise the selector; they do not
++claim real transfers or GPU correctness. The 805 CUDA check uses real tensors.
++"""
++
++import unittest
++from types import SimpleNamespace
++from unittest.mock import Mock, patch
++
++import torch
++
++from sglang.test.test_utils import maybe_stub_sgl_kernel
++
++maybe_stub_sgl_kernel()
++
++from sglang.srt.environ import envs
++from sglang.srt.managers.schedule_batch import ScheduleBatch
++from sglang.srt.model_executor.forward_batch_info import (
++    CaptureHiddenMode,
++    ForwardBatch,
++    ForwardMode,
++)
++from sglang.srt.runtime_context import get_context
++from sglang.srt.speculative.eagle_info import EagleDraftExtendInput
++from sglang.srt.speculative.eagle_worker_common import prepare_for_draft_extend
++
++
++class _TaggedCuda(torch.Tensor):
++    @property
++    def is_cuda(self):
++        return True
++
++
++def make_batch(lengths, *, device="cpu", tagged=False, cpu_mirror=True):
++    gpu = torch.tensor(lengths, dtype=torch.int64, device=device)
++    if tagged:
++        gpu = gpu.as_subclass(_TaggedCuda)
++    batch = ScheduleBatch(
++        reqs=[
++            SimpleNamespace(rid=str(i), lora_id=None, token_type_ids=None)
++            for i in range(len(lengths))
++        ],
++        device=device,
++        model_config=SimpleNamespace(vocab_size=128),
++        seq_lens=gpu,
++        seq_lens_cpu=torch.tensor(lengths, dtype=torch.int64) if cpu_mirror else None,
++        seq_lens_sum=sum(lengths) if cpu_mirror else None,
++        req_pool_indices=torch.arange(len(lengths), dtype=torch.int64, device=device),
++        input_ids=torch.zeros(len(lengths) * 4, dtype=torch.int64, device=device),
++        out_cache_loc=torch.zeros(len(lengths) * 4, dtype=torch.int64, device=device),
++        forward_mode=ForwardMode.DECODE,
++    )
++    runner = SimpleNamespace(
++        device=device,
++        is_draft_worker=True,
++        spec_algorithm=SimpleNamespace(is_standalone=lambda: False),
++        kv_index_translator=SimpleNamespace(rebind_write_loc=lambda _: None),
++        ngram_embedding_manager=SimpleNamespace(enabled=False),
++        model_config=SimpleNamespace(model_is_mrope=False),
++        lora_manager=None,
++        ps=SimpleNamespace(attn_dcp_size=1),
++        prefill_attention_backend_str="fa3",
++        attn_backend=SimpleNamespace(init_forward_metadata=Mock()),
++    )
++    return batch, runner
++
++
++def cpu_positions(backend, prefix, lengths, total):
++    positions = torch.cat(
++        [
++            torch.arange(int(p), int(p) + int(n), dtype=torch.int64)
++            for p, n in zip(prefix, lengths)
++        ]
++    )
++    starts = torch.cumsum(lengths, dim=0, dtype=torch.int32) - lengths
++    return positions, starts
++
++
++class DraftExtendDeviceMetadataTest(unittest.TestCase):
++    def setUp(self):
++        override = get_context().override_server_args(disable_overlap_schedule=True)
++        override.install()
++        self.addCleanup(override.restore)
++        self.enterContext(
++            patch(
++                "sglang.srt.model_executor.forward_batch_info.compute_position",
++                side_effect=cpu_positions,
++            )
++        )
++        self.enterContext(
++            patch(
++                "sglang.srt.model_executor.forward_batch_info.enable_num_token_non_padded",
++                return_value=False,
++            )
++        )
++        self.plan_stream = self.enterContext(
++            patch.object(
++                envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM, "get", return_value=False
++            )
++        )
++
++    def prepare(self, batch, runner, *, front=0, graph=False):
++        info = EagleDraftExtendInput(hidden_states=None, num_front_tokens=front)
++        graph_runner = SimpleNamespace(can_run_graph=lambda _: graph)
++        count = len(batch.seq_lens) * (4 + front)
++        return prepare_for_draft_extend(
++            info,
++            batch,
++            torch.zeros(len(batch.seq_lens) * 4, dtype=torch.int64),
++            4,
++            runner,
++            graph_runner,
++            return_hidden_states_before_norm=True,
++            widened_out_cache_loc=(
++                torch.zeros(count, dtype=torch.int64) if front else None
++            ),
++            widened_positions=torch.arange(count, dtype=torch.int64) if front else None,
++        )
++
++    def capture_host_transfers(self, batch, runner):
++        copies = []
++        original = torch.Tensor.to
++
++        def move(tensor, *args, **kwargs):
++            if (
++                tensor.shape == (len(batch.seq_lens),)
++                and tensor.dtype == torch.int32
++                and kwargs.get("non_blocking")
++                and args
++                and args[0] == runner.device
++            ):
++                copies.append(tensor.tolist())
++            return original(tensor, *args, **kwargs)
++
++        return copies, patch.object(torch.Tensor, "to", new=move)
++
++    def test_cpu_mirror_draft_does_not_copy_the_same_lengths_back_to_device(self):
++        batch, runner = make_batch([8000, 26000], tagged=True)
++        gpu, cpu = batch.seq_lens, batch.seq_lens_cpu
++        copies, guard = self.capture_host_transfers(batch, runner)
++        with guard:
++            result = self.prepare(batch, runner)
++        self.assertEqual(
++            copies, [], "Draft metadata redundantly retransferred from host"
++        )
++        self.assertIs(batch.seq_lens, gpu)
++        self.assertIs(batch.seq_lens_cpu, cpu)
++        self.assertEqual(cpu.tolist(), [8000, 26000])
++        self.assertEqual(result.seq_lens.tolist(), [8004, 26004])
++        self.assertEqual(result.seq_lens_cpu.tolist(), [8004, 26004])
++        self.assertEqual(result.seq_lens_sum, 34008)
++        self.assertEqual(result.extend_seq_lens_cpu, [4, 4])
++        self.assertEqual(result.extend_prefix_lens_cpu, [8000, 26000])
++        self.assertEqual(result.extend_start_loc.tolist(), [0, 4])
++        self.assertEqual(
++            result.positions.tolist(),
++            list(range(8000, 8004)) + list(range(26000, 26004)),
++        )
++        self.assertEqual(result.capture_hidden_mode, CaptureHiddenMode.FULL)
++        self.assertTrue(result.return_hidden_states_before_norm)
++        self.assertTrue(result.forward_metadata_ready)
++        runner.attn_backend.init_forward_metadata.assert_called_once_with(result)
++
++    def test_widened_prefix_clamp_and_post_write_cpu_sum_are_preserved(self):
++        batch, runner = make_batch([1, 5, 262140], tagged=True)
++        result = self.prepare(batch, runner, front=2)
++        self.assertEqual(result.extend_prefix_lens.tolist(), [0, 3, 262138])
++        self.assertEqual(result.extend_prefix_lens_cpu, [0, 3, 262138])
++        self.assertEqual(result.extend_seq_lens.tolist(), [6, 6, 6])
++        self.assertEqual(result.extend_seq_lens_cpu, [6, 6, 6])
++        self.assertEqual(result.seq_lens_cpu.tolist(), [5, 9, 262144])
++        self.assertEqual(result.seq_lens_sum, 262158)
++        self.assertEqual(result.positions.tolist(), list(range(18)))
++
++    def test_per_forward_tensors_do_not_rewrite_scheduler_lengths(self):
++        batch, runner = make_batch([17, 8000], tagged=True)
++        result = self.prepare(batch, runner)
++        result.extend_prefix_lens.add_(100)
++        result.seq_lens.add_(100)
++        result.seq_lens_cpu.add_(100)
++        self.assertEqual(batch.seq_lens.tolist(), [17, 8000])
++        self.assertEqual(batch.seq_lens_cpu.tolist(), [17, 8000])
++        self.assertEqual(batch.prefix_lens, [17, 8000])
++        self.assertEqual(batch.extend_lens, [4, 4])
++
++    def test_overlap_and_plan_stream_keep_the_original_metadata_path(self):
++        for kind in ("batch_overlap", "global_overlap", "plan_stream"):
++            with self.subTest(kind=kind):
++                batch, runner = make_batch([8000], tagged=True)
++                override = get_context().override_server_args(
++                    disable_overlap_schedule=kind != "global_overlap"
++                )
++                override.install()
++                try:
++                    batch.enable_overlap = kind == "batch_overlap"
++                    self.plan_stream.return_value = kind == "plan_stream"
++                    copies, guard = self.capture_host_transfers(batch, runner)
++                    with guard:
++                        result = self.prepare(batch, runner)
++                    self.assertEqual(copies, [[4], [8000]])
++                    self.assertEqual(result.extend_prefix_lens_cpu, [8000])
++                finally:
++                    override.restore()
++                    self.plan_stream.return_value = False
++
++    def test_native_cpu_device_keeps_existing_host_metadata(self):
++        batch, runner = make_batch([41])
++        copies, guard = self.capture_host_transfers(batch, runner)
++        with guard:
++            result = self.prepare(batch, runner)
++        self.assertEqual(copies, [[4], [41]])
++        self.assertEqual(result.seq_lens_cpu.tolist(), [45])
++
++    def test_gpu_only_path_still_has_no_fabricated_cpu_seq_lengths(self):
++        batch, runner = make_batch([41], tagged=True, cpu_mirror=False)
++        result = self.prepare(batch, runner)
++        self.assertIsNone(result.seq_lens_cpu)
++        self.assertEqual(result.extend_seq_lens_cpu, [4])
++        self.assertIsNone(result.extend_prefix_lens_cpu)
++        self.assertEqual(result.seq_lens.tolist(), [45])
++
++    def test_graph_path_retains_mirrors_without_eager_metadata_planning(self):
++        batch, runner = make_batch([15, 200], tagged=True)
++        result = self.prepare(batch, runner, graph=True)
++        self.assertEqual(result.extend_prefix_lens_cpu, [15, 200])
++        self.assertEqual(result.seq_lens_sum, 223)
++        runner.attn_backend.init_forward_metadata.assert_not_called()
++        self.assertFalse(result.forward_metadata_ready)
++
++    def test_empty_idle_batch_has_no_metadata_transfer_or_eager_plan(self):
++        batch, runner = make_batch([], tagged=True)
++        batch.forward_mode = ForwardMode.IDLE
++        result = self.prepare(batch, runner)
++        self.assertEqual(result.positions.numel(), 0)
++        self.assertEqual(result.seq_lens_sum, 0)
++        runner.attn_backend.init_forward_metadata.assert_not_called()
++
++    def test_invalid_device_override_fails_before_position_use(self):
++        for override in (
++            (torch.zeros(1, dtype=torch.int32),),
++            (torch.zeros(2), torch.zeros(2)),
++            (torch.zeros(3, dtype=torch.int32), torch.zeros(3, dtype=torch.int32)),
++            (None, None),
++            (
++                torch.zeros(2, dtype=torch.int32, device="meta"),
++                torch.zeros(2, dtype=torch.int32, device="meta"),
++            ),
++        ):
++            with self.subTest(override=override):
++                batch, runner = make_batch([11, 20])
++                batch.forward_mode = ForwardMode.DRAFT_EXTEND_V2
++                batch.extend_lens = [4, 4]
++                batch.prefix_lens = [11, 20]
++                batch.extend_num_tokens = 8
++                with self.assertRaises(ValueError):
++                    ForwardBatch.init_new(
++                        batch,
++                        runner,
++                        capture_hidden_mode=CaptureHiddenMode.FULL,
++                        return_hidden_states_before_norm=False,
++                        extend_metadata=override,
++                    )
++
++    def test_override_is_not_silently_ignored_in_non_extend_modes(self):
++        for mode in (ForwardMode.DECODE, ForwardMode.IDLE, ForwardMode.TARGET_VERIFY):
++            batch, runner = make_batch([11])
++            batch.forward_mode = mode
++            with self.assertRaises(ValueError):
++                ForwardBatch.init_new(
++                    batch,
++                    runner,
++                    capture_hidden_mode=CaptureHiddenMode.FULL,
++                    return_hidden_states_before_norm=False,
++                    extend_metadata=(
++                        torch.ones(1, dtype=torch.int32),
++                        torch.ones(1, dtype=torch.int32),
++                    ),
++                )
++
++
++if __name__ == "__main__":
++    unittest.main()
+--- /dev/null
++++ b/test/registered/unit/model_executor/test_prefill_metadata_handoff.py
+@@ -0,0 +1,316 @@
++"""Target-to-draft prefill metadata handoff, using real worker methods.
++
++CPU storage is tagged only to exercise CUDA selectors; real CUDA equivalence is
++checked separately on the authorized development CVM.
++"""
++
++import contextlib
++import unittest
++from types import MethodType, SimpleNamespace
++from unittest.mock import Mock, patch
++
++import torch
++
++from sglang.test.test_utils import maybe_stub_sgl_kernel
++
++maybe_stub_sgl_kernel()
++
++from test_draft_extend_device_metadata import _TaggedCuda, cpu_positions, make_batch
++
++from sglang.srt.environ import envs
++from sglang.srt.managers.tp_worker import TpModelWorker
++from sglang.srt.model_executor.forward_batch_info import (
++    CaptureHiddenMode,
++    ForwardBatch,
++    ForwardMode,
++)
++from sglang.srt.runtime_context import get_context
++from sglang.srt.speculative.eagle_worker_v2 import EagleDraftWorker, EAGLEWorkerV2
++
++
++class PrefillMetadataHandoffTest(unittest.TestCase):
++    def setUp(self):
++        self.context_override = get_context().override_server_args(
++            disable_overlap_schedule=True
++        )
++        self.context_override.install()
++        self.addCleanup(self.context_override.restore)
++        self.enterContext(
++            patch(
++                "sglang.srt.model_executor.forward_batch_info.compute_position",
++                side_effect=cpu_positions,
++            )
++        )
++        self.enterContext(
++            patch(
++                "sglang.srt.model_executor.forward_batch_info.enable_num_token_non_padded",
++                return_value=False,
++            )
++        )
++        self.plan_stream = self.enterContext(
++            patch.object(
++                envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM, "get", return_value=False
++            )
++        )
++        self.enterContext(
++            patch("sglang.srt.managers.tp_worker.capture_pre_sample_logits")
++        )
++        for name in (
++            "speculative_moe_backend_context",
++            "speculative_moe_a2a_backend_context",
++            "spec_stage_span",
++        ):
++            self.enterContext(
++                patch(
++                    "sglang.srt.speculative.eagle_worker_v2." + name,
++                    side_effect=lambda *args, **kw: contextlib.nullcontext(),
++                )
++            )
++        self.enterContext(
++            patch(
++                "sglang.srt.speculative.eagle_worker_v2.renorm_draft_probs",
++                side_effect=lambda logits, *args: logits,
++            )
++        )
++        self.enterContext(
++            patch(
++                "sglang.srt.speculative.eagle_worker_v2.fast_topk",
++                side_effect=lambda probs, k, dim: (
++                    probs[:, :k],
++                    torch.zeros((probs.shape[0], k), dtype=torch.int64),
++                ),
++            )
++        )
++        self.enterContext(
++            patch("sglang.srt.speculative.eagle_worker_v2.maybe_detect_nan")
++        )
++        self.enterContext(
++            patch("sglang.srt.speculative.eagle_worker_v2.maybe_detect_inf")
++        )
++        original_init = ForwardBatch.init_new
++        self.frames = []
++
++        def construct(batch, runner, **kwargs):
++            fb = original_init(batch, runner, **kwargs)
++            if not runner.is_draft_worker and fb.extend_seq_lens is not None:
++                fb.extend_seq_lens = fb.extend_seq_lens.as_subclass(_TaggedCuda)
++                fb.extend_prefix_lens = fb.extend_prefix_lens.as_subclass(_TaggedCuda)
++            self.frames.append((runner.is_draft_worker, fb, dict(kwargs)))
++            return fb
++
++        self.enterContext(patch.object(ForwardBatch, "init_new", side_effect=construct))
++
++    def setup_chain(self, *, tagged=True, pad_target=False, draft=True):
++        batch, target_runner = make_batch([3, 14], tagged=tagged)
++        _, draft_runner = make_batch([3, 14])
++        batch.forward_mode = ForwardMode.EXTEND
++        batch.input_ids = torch.arange(7, dtype=torch.int64)
++        batch.out_cache_loc = torch.arange(7, dtype=torch.int64)
++        batch.extend_lens = [3, 4]
++        batch.prefix_lens = [0, 10]
++        batch.extend_num_tokens = 7
++        batch.extend_logprob_start_lens = [0, 0]
++        target_runner.is_draft_worker = False
++        target_runner.canary_manager = draft_runner.canary_manager = None
++        target_runner.tp_group = draft_runner.tp_group = None
++        self.original_metadata = None
++
++        def output(fb):
++            return SimpleNamespace(
++                logits_output=SimpleNamespace(
++                    next_token_logits=torch.ones((2, 4)),
++                    hidden_states=torch.zeros((7, 4)),
++                    mm_input_embeds=None,
++                ),
++                can_run_graph=False,
++                expert_distribution_metrics=None,
++                routed_experts_output=None,
++                indexer_topk_output=None,
++            )
++
++        def target_forward(fb, **kwargs):
++            self.original_metadata = (fb.extend_seq_lens, fb.extend_prefix_lens)
++            if pad_target:
++                # Actual eager/MLP/graph preparation can rebind these fields.
++                fb.extend_seq_lens = torch.cat(
++                    (fb.extend_seq_lens, torch.tensor([0], dtype=torch.int32))
++                )
++                fb.extend_prefix_lens = torch.cat(
++                    (fb.extend_prefix_lens, torch.tensor([0], dtype=torch.int32))
++                )
++            return output(fb)
++
++        target_runner.forward = target_forward
++        target_runner.sample = lambda logits, fb: torch.tensor(
++            [91, 92], dtype=torch.int64
++        )
++        draft_runner.forward = lambda fb: output(fb)
++        target = SimpleNamespace(
++            model_runner=target_runner,
++            pp_group=SimpleNamespace(is_last_rank=True),
++            enable_overlap=False,
++            enable_spec=True,
++            is_dllm=lambda: False,
++            set_hicache_consumer=Mock(),
++        )
++        self.target_kwargs = []
++
++        def target_call(batch, **kwargs):
++            self.target_kwargs.append(dict(kwargs))
++            result = TpModelWorker.forward_batch_generation(target, batch, **kwargs)
++            self.target_result = result
++            return result
++
++        target.forward_batch_generation = target_call
++        draft_worker = SimpleNamespace(
++            draft_runner=draft_runner,
++            speculative_algorithm=SimpleNamespace(is_standalone=lambda: False),
++            seed_dsa_topk_from_draft_extend=False,
++            topk=1,
++            draft_tp_context=lambda *args: contextlib.nullcontext(),
++        )
++        draft_worker._draft_extend_for_prefill = MethodType(
++            EagleDraftWorker._draft_extend_for_prefill, draft_worker
++        )
++        outer = SimpleNamespace(
++            target_worker=target,
++            _draft_worker=draft_worker if draft else None,
++            draft_worker=draft_worker if draft else None,
++            speculative_algorithm=SimpleNamespace(is_standalone=lambda: False),
++        )
++        return batch, target, draft_worker, outer
++
++    def run_chain(self, batch, outer):
++        copies = []
++        original_to = torch.Tensor.to
++
++        def move(tensor, *args, **kwargs):
++            if (
++                tensor.dtype == torch.int32
++                and kwargs.get("non_blocking")
++                and args
++                and args[0] == "cpu"
++            ):
++                copies.append(tensor.tolist())
++            return original_to(tensor, *args, **kwargs)
++
++        def published(lengths):
++            self.assertIs(lengths, batch.seq_lens)
++            self.assertIsNone(
++                getattr(self.target_result, "prefill_extend_metadata", None)
++            )
++
++        with patch.object(torch.Tensor, "to", new=move):
++            result = EAGLEWorkerV2.forward_batch_generation(
++                outer, batch, on_publish=published
++            )
++        return result, copies
++
++    def test_only_target_uploads_metadata_and_real_cpu_mirrors_remain(self):
++        batch, target, draft, outer = self.setup_chain()
++        cpu_extend, cpu_prefix = batch.extend_lens, batch.prefix_lens
++        gpu_lengths, cpu_lengths = batch.seq_lens, batch.seq_lens_cpu
++        result, copies = self.run_chain(batch, outer)
++        self.assertEqual(
++            copies,
++            [[3, 4], [0, 10]],
++            "Draft prefill repeated the target metadata upload",
++        )
++        draft_fb = self.frames[-1][1]
++        self.assertIs(draft_fb.extend_seq_lens, self.original_metadata[0])
++        self.assertIs(draft_fb.extend_prefix_lens, self.original_metadata[1])
++        self.assertIs(draft_fb.extend_seq_lens_cpu, cpu_extend)
++        self.assertIs(draft_fb.extend_prefix_lens_cpu, cpu_prefix)
++        self.assertEqual(cpu_extend, [3, 4])
++        self.assertEqual(cpu_prefix, [0, 10])
++        self.assertIs(batch.seq_lens, gpu_lengths)
++        self.assertIs(batch.seq_lens_cpu, cpu_lengths)
++        self.assertEqual(batch.seq_lens_sum, 17)
++        self.assertEqual(draft_fb.positions.tolist(), [0, 1, 2, 10, 11, 12, 13])
++        self.assertEqual(draft_fb.input_ids.tolist(), [1, 2, 91, 4, 5, 6, 92])
++        self.assertEqual(self.frames[0][1].capture_hidden_mode, CaptureHiddenMode.FULL)
++        self.assertEqual(draft_fb.capture_hidden_mode, CaptureHiddenMode.LAST)
++        self.assertIsNone(result.prefill_extend_metadata)
++        self.assertIsNotNone(result.next_draft_input)
++        target.set_hicache_consumer.assert_called_once_with(
++            batch.hicache_consumer_index
++        )
++
++    def test_target_padding_rebind_keeps_original_unpadded_metadata(self):
++        batch, _, _, outer = self.setup_chain(pad_target=True)
++        _, copies = self.run_chain(batch, outer)
++        target_fb, draft_fb = self.frames[0][1], self.frames[-1][1]
++        self.assertEqual(target_fb.extend_seq_lens.shape, (3,))
++        self.assertEqual(target_fb.extend_prefix_lens.shape, (3,))
++        self.assertEqual(draft_fb.extend_seq_lens.shape, (2,))
++        self.assertIs(draft_fb.extend_seq_lens, self.original_metadata[0])
++        self.assertIs(draft_fb.extend_prefix_lens, self.original_metadata[1])
++        self.assertEqual(copies, [[3, 4], [0, 10]])
++
++    def test_cpu_and_overlap_modes_keep_original_construction(self):
++        for mode in (
++            "cpu",
++            "batch_overlap",
++            "worker_overlap",
++            "global_overlap",
++            "plan_stream",
++        ):
++            with self.subTest(mode=mode):
++                batch, target, _, outer = self.setup_chain(tagged=mode != "cpu")
++                batch.enable_overlap = mode == "batch_overlap"
++                target.enable_overlap = mode == "worker_overlap"
++                self.plan_stream.return_value = mode == "plan_stream"
++                with patch(
++                    "sglang.srt.speculative.eagle_worker_v2.get_schedule",
++                    return_value=SimpleNamespace(
++                        disable_overlap_schedule=mode != "global_overlap"
++                    ),
++                ), patch(
++                    "sglang.srt.managers.tp_worker.get_schedule",
++                    return_value=SimpleNamespace(
++                        disable_overlap_schedule=mode != "global_overlap"
++                    ),
++                ):
++                    result, copies = self.run_chain(batch, outer)
++                self.assertEqual(copies, [[3, 4], [0, 10], [3, 4], [0, 10]])
++                self.assertIsNone(result.prefill_extend_metadata)
++
++    def test_no_draft_does_not_retain_metadata(self):
++        batch, _, _, outer = self.setup_chain(draft=False)
++        result, copies = self.run_chain(batch, outer)
++        self.assertEqual(copies, [[3, 4], [0, 10]])
++        self.assertNotIn("capture_prefill_extend_metadata", self.target_kwargs[-1])
++        self.assertIsNone(result.prefill_extend_metadata)
++
++    def test_prebuilt_forward_batch_cannot_export_borrowed_metadata(self):
++        batch, target, _, _ = self.setup_chain()
++        fb = ForwardBatch.init_new(
++            batch,
++            target.model_runner,
++            capture_hidden_mode=CaptureHiddenMode.FULL,
++            return_hidden_states_before_norm=False,
++        )
++        result = TpModelWorker.forward_batch_generation(
++            target, None, forward_batch=fb, capture_prefill_extend_metadata=True
++        )
++        self.assertIsNone(result.prefill_extend_metadata)
++        target.set_hicache_consumer.assert_not_called()
++
++    def test_padded_cpu_prefix_keeps_original_representation(self):
++        batch, _, draft, _ = self.setup_chain()
++        batch.prefix_lens.append(0)
++        metadata = (
++            torch.tensor([3, 4], dtype=torch.int32),
++            torch.tensor([0, 10], dtype=torch.int32),
++        )
++        draft._draft_extend_for_prefill(
++            batch, torch.zeros((7, 4)), torch.tensor([91, 92]), extend_metadata=metadata
++        )
++        draft_fb = self.frames[-1][1]
++        self.assertNotIn("extend_metadata", self.frames[-1][2])
++        self.assertEqual(draft_fb.extend_prefix_lens_cpu, [0, 10, 0])
++        self.assertEqual(batch.prefix_lens, [0, 10, 0])
++
++
++if __name__ == "__main__":
++    unittest.main()
+--- /dev/null
++++ b/test/registered/unit/sampling/test_identity_grammar_mask.py
+@@ -0,0 +1,193 @@
++"""Identity-mask removal must preserve constraints, rollback and barriers."""
++
++import unittest
++from types import SimpleNamespace
++from unittest.mock import Mock, patch
++
++import test_sampling_batch_info as sampling_tests
++import torch
++
++from sglang.srt.constrained.base_grammar_backend import BaseGrammarObject
++from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarObject
++from sglang.srt.constrained.torch_ops.token_filter_torch_ops import (
++    set_token_filter_torch,
++)
++from sglang.srt.speculative.spec_utils import (
++    GrammarTree,
++    build_grammar_vocab_mask,
++    generate_token_bitmask,
++)
++
++
++def allocate(vocab_size, batch_size, device):
++    return torch.full((batch_size, (vocab_size + 31) // 32), -1, dtype=torch.int32)
++
++
++def reasoner(*, thinking=False, inner=None):
++    grammar = ReasonerGrammarObject(
++        inner,
++        [9, 10],
++        think_excluded_token_ids=[7],
++        enable_token_filter=True,
++        token_filter_fn=set_token_filter_torch,
++        allocate_vocab_mask_fn=Mock(side_effect=allocate),
++        move_vocab_mask_fn=Mock(side_effect=lambda mask, device: mask),
++    )
++    grammar.maybe_init_reasoning(thinking)
++    return grammar
++
++
++def tree():
++    return GrammarTree.from_host(
++        torch.tensor([[1, 2, 3, -1]], dtype=torch.int32),
++        torch.tensor([[-1, -1, -1, -1]], dtype=torch.int32),
++        torch.tensor([[1, 2, 3, 4]], dtype=torch.int64),
++    )
++
++
++class Constraint(BaseGrammarObject):
++    def __init__(self):
++        super().__init__()
++        self.allocations = 0
++        self.accepted = []
++
++    def allocate_vocab_mask(self, vocab_size, batch_size, device):
++        self.allocations += 1
++        return allocate(vocab_size, batch_size, device)
++
++    def fill_vocab_mask(self, mask, idx):
++        mask[idx, 0] &= ~(1 << 5)
++
++    def move_vocab_mask(self, mask, device):
++        return mask
++
++    def accept_token(self, token):
++        self.accepted.append(token)
++
++    def rollback(self, k):
++        del self.accepted[-k:]
++
++
++class IdentityGrammarMaskTest(unittest.TestCase):
++    def test_no_inner_grammar_generation_skips_allocation_and_clears_old_mask(self):
++        grammar = reasoner()
++        info = sampling_tests._make_info(batch_size=1, grammars=[grammar])
++        info.grammar_mask = object()
++        info.update_regex_vocab_mask()
++        self.assertIsNone(info.grammar_mask)
++        grammar.allocate_vocab_mask_fn.assert_not_called()
++        grammar.move_vocab_mask_fn.assert_not_called()
++
++    def test_thinking_and_inner_constraints_do_not_get_the_identity_fast_path(self):
++        for grammar in (reasoner(thinking=True), reasoner(inner=Constraint())):
++            info = sampling_tests._make_info(batch_size=1, grammars=[grammar])
++            info.update_regex_vocab_mask()
++            self.assertIsNotNone(info.grammar_mask)
++            self.assertFalse(grammar.vocab_mask_is_unconstrained)
++
++    def test_rollback_across_thinking_end_revokes_identity_capability(self):
++        grammar = reasoner(thinking=True)
++        grammar.accept_token(9)
++        grammar.accept_token(10)
++        self.assertTrue(grammar.vocab_mask_is_unconstrained)
++        grammar.rollback(1)
++        self.assertFalse(grammar.vocab_mask_is_unconstrained)
++        info = sampling_tests._make_info(batch_size=1, grammars=[grammar])
++        info.update_regex_vocab_mask()
++        self.assertIsNotNone(info.grammar_mask)
++
++    def test_mixed_batch_keeps_exact_row_positions_and_real_constraint(self):
++        noop, constrained = reasoner(), Constraint()
++        info = sampling_tests._make_info(
++            batch_size=3, grammars=[noop, None, constrained]
++        )
++        info.update_regex_vocab_mask()
++        mask = info.grammar_mask.vocab_mask
++        self.assertEqual(mask.shape, (3, 1))
++        self.assertEqual(mask[:2, 0].tolist(), [-1, -1])
++        self.assertEqual(int(mask[2, 0]) & (1 << 5), 0)
++        noop.allocate_vocab_mask_fn.assert_not_called()
++        self.assertEqual(constrained.allocations, 1)
++
++    def test_all_none_members_clear_previous_mask(self):
++        info = sampling_tests._make_info(batch_size=2, grammars=[None, None])
++        info.grammar_mask = object()
++        info.update_regex_vocab_mask()
++        self.assertIsNone(info.grammar_mask)
++
++    def test_speculative_identity_retains_original_dfs_state_bookkeeping(self):
++        baseline, candidate = reasoner(), reasoner()
++        original, _ = generate_token_bitmask(
++            [SimpleNamespace(grammar=baseline)], *tree().resolve(), 32
++        )
++        self.assertTrue(torch.all(original == -1))
++        info = SimpleNamespace(vocab_size=32, grammar_mask=object())
++        with patch.object(
++            torch.Tensor,
++            "to",
++            side_effect=AssertionError("Identity mask should not transfer"),
++        ):
++            result = build_grammar_vocab_mask(
++                reqs=[SimpleNamespace(grammar=candidate)],
++                tree=tree(),
++                sampling_info=info,
++                device="cpu",
++                barrier=None,
++            )
++        self.assertIsNone(result)
++        self.assertIsNone(info.grammar_mask)
++        for field in (
++            "current_token",
++            "tokens_after_end",
++            "tokens_in_think",
++            "_thinking_match_history",
++        ):
++            self.assertEqual(getattr(candidate, field), getattr(baseline, field))
++
++    def test_barrier_runs_before_deciding_if_the_mask_is_unconstrained(self):
++        grammar = reasoner(thinking=True)
++        barrier = Mock(side_effect=lambda: grammar.maybe_init_reasoning(False))
++        info = SimpleNamespace(vocab_size=32, grammar_mask=object())
++        with patch.object(
++            torch.Tensor, "to", side_effect=AssertionError("No identity copy")
++        ):
++            result = build_grammar_vocab_mask(
++                reqs=[SimpleNamespace(grammar=grammar)],
++                tree=tree(),
++                sampling_info=info,
++                device="cpu",
++                barrier=barrier,
++            )
++        barrier.assert_called_once()
++        self.assertIsNone(result)
++        self.assertIsNone(info.grammar_mask)
++
++    def test_speculative_thinking_constraints_still_transfer_and_apply(self):
++        grammar = reasoner(thinking=True)
++        info = SimpleNamespace(vocab_size=32, grammar_mask=object())
++        result = build_grammar_vocab_mask(
++            reqs=[SimpleNamespace(grammar=grammar)],
++            tree=tree(),
++            sampling_info=info,
++            device="cpu",
++            barrier=None,
++        )
++        self.assertIsNotNone(result)
++        self.assertEqual(int(result.vocab_mask[0, 0]) & (1 << 7), 0)
++        self.assertIsNone(info.grammar_mask)
++
++    def test_speculative_no_grammar_members_clear_old_prefill_mask(self):
++        info = SimpleNamespace(vocab_size=32, grammar_mask=object())
++        result = build_grammar_vocab_mask(
++            reqs=[SimpleNamespace(grammar=None)],
++            tree=tree(),
++            sampling_info=info,
++            device="cpu",
++            barrier=None,
++        )
++        self.assertIsNone(result)
++        self.assertIsNone(info.grammar_mask)
++
++
++if __name__ == "__main__":
++    unittest.main()
+--- /dev/null
++++ b/test/registered/unit/test_request_disconnect_cleanup.py
+@@ -0,0 +1,240 @@
++"""HTTP cancellation/ownership tests without an inference engine."""
++
++import asyncio
++import json
++import unittest
++from types import SimpleNamespace
++
++from fastapi import HTTPException
++
++from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
++from sglang.srt.entrypoints.openai.serving_responses import OpenAIServingResponses
++from sglang.srt.entrypoints.request_disconnect import (
++    await_response_or_disconnect,
++    response_disconnect_watched,
++)
++
++
++class Request:
++    def __init__(self):
++        self.state = SimpleNamespace()
++        self.messages = asyncio.Queue()
++        self.receiving = asyncio.Event()
++        self.receive_cancelled = False
++
++    async def receive(self):
++        self.receiving.set()
++        try:
++            return await self.messages.get()
++        except asyncio.CancelledError:
++            self.receive_cancelled = True
++            raise
++
++
++class TestDisconnectCleanup(unittest.IsolatedAsyncioTestCase):
++    async def test_disconnect_cancels_and_joins_pending_work(self):
++        request = Request()
++        closed = asyncio.Event()
++
++        async def work():
++            try:
++                await asyncio.Event().wait()
++            finally:
++                await asyncio.sleep(0)
++                closed.set()
++
++        task = asyncio.create_task(await_response_or_disconnect(work(), request))
++        await request.receiving.wait()
++        self.assertTrue(response_disconnect_watched(request))
++        await request.messages.put({"type": "http.disconnect"})
++        with self.assertRaisesRegex(ValueError, "disconnected"):
++            await task
++        self.assertTrue(closed.is_set())
++        self.assertFalse(response_disconnect_watched(request))
++
++    async def test_caller_cancellation_closes_work_and_monitor(self):
++        request = Request()
++        closed = asyncio.Event()
++
++        async def work():
++            try:
++                await asyncio.Event().wait()
++            finally:
++                closed.set()
++
++        task = asyncio.create_task(await_response_or_disconnect(work(), request))
++        await request.receiving.wait()
++        task.cancel()
++        with self.assertRaises(asyncio.CancelledError):
++            await task
++        self.assertTrue(closed.is_set())
++        self.assertTrue(request.receive_cancelled)
++        self.assertFalse(response_disconnect_watched(request))
++
++    async def test_work_failure_preserves_exception_and_releases_listener(self):
++        request = Request()
++
++        async def work():
++            await request.receiving.wait()
++            raise RuntimeError("engine failed")
++
++        with self.assertRaisesRegex(RuntimeError, "engine failed"):
++            await await_response_or_disconnect(work(), request)
++        self.assertTrue(request.receive_cancelled)
++        self.assertFalse(response_disconnect_watched(request))
++
++    async def test_background_does_not_consume_receive(self):
++        request = Request()
++
++        async def work():
++            return 7
++
++        self.assertEqual(
++            await await_response_or_disconnect(work(), request, background=True), 7
++        )
++        self.assertFalse(request.receiving.is_set())
++
++    async def test_nested_waiter_uses_existing_listener(self):
++        request = Request()
++        request.state.sglang_response_disconnect_watched = True
++
++        async def work():
++            return 9
++
++        self.assertEqual(await await_response_or_disconnect(work(), request), 9)
++        self.assertFalse(request.receiving.is_set())
++        self.assertTrue(response_disconnect_watched(request))
++
++
++class TestStreamingOwnership(unittest.IsolatedAsyncioTestCase):
++    scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
++
++    async def receive(self):
++        await asyncio.Event().wait()
++
++    async def test_send_failure_closes_suspended_event_and_generation(self):
++        closed = []
++
++        async def generation():
++            try:
++                yield "token"
++            finally:
++                await asyncio.sleep(0)
++                closed.append("generation")
++
++        source = generation()
++
++        async def events():
++            try:
++                async for token in source:
++                    yield token
++            finally:
++                await asyncio.sleep(0)
++                closed.append("events")
++
++        async def send(message):
++            if message["type"] == "http.response.body":
++                raise OSError("socket closed")
++
++        response = GenerationStreamingResponse(events(), generation=source)
++        with self.assertRaises(Exception):
++            await response(self.scope, self.receive, send)
++        self.assertEqual(closed, ["events", "generation"])
++
++    async def test_header_send_failure_closes_prestarted_generation(self):
++        closed = asyncio.Event()
++
++        async def generation():
++            try:
++                yield "first"
++                yield "next"
++            finally:
++                closed.set()
++
++        source = generation()
++        first = await source.__anext__()
++
++        async def events():
++            yield first
++            async for item in source:
++                yield item
++
++        async def send(message):
++            raise OSError("header send failed")
++
++        response = GenerationStreamingResponse(events(), generation=source)
++        with self.assertRaises(Exception):
++            await response(self.scope, self.receive, send)
++        self.assertTrue(closed.is_set())
++
++    async def test_cancel_during_send_closes_suspended_generator(self):
++        closed = asyncio.Event()
++        sending = asyncio.Event()
++
++        async def events():
++            try:
++                yield "first"
++            finally:
++                await asyncio.sleep(0)
++                closed.set()
++
++        async def send(message):
++            if message["type"] == "http.response.body":
++                sending.set()
++                await asyncio.Event().wait()
++
++        response = GenerationStreamingResponse(events())
++        task = asyncio.create_task(response(self.scope, self.receive, send))
++        await sending.wait()
++        task.cancel()
++        with self.assertRaises(asyncio.CancelledError):
++            await task
++        self.assertTrue(closed.is_set())
++
++
++class TestResponsesOwnership(unittest.IsolatedAsyncioTestCase):
++    async def test_full_response_keeps_http_error_and_closes_generation(self):
++        serving = object.__new__(OpenAIServingResponses)
++        closed = asyncio.Event()
++
++        async def generation():
++            try:
++                raise HTTPException(503, "engine unavailable")
++                yield
++            finally:
++                closed.set()
++
++        response = await serving.responses_full_generator(
++            SimpleNamespace(background=False), None, generation(), None,
++            "model", None, None, require_reasoning=False,
++        )
++        self.assertEqual(response.status_code, 503)
++        self.assertEqual(json.loads(response.body)["error"]["code"], 503)
++        self.assertTrue(closed.is_set())
++
++    async def test_full_response_cancellation_propagates_after_cleanup(self):
++        serving = object.__new__(OpenAIServingResponses)
++        started = asyncio.Event()
++        closed = asyncio.Event()
++
++        async def generation():
++            try:
++                started.set()
++                await asyncio.Event().wait()
++                yield
++            finally:
++                closed.set()
++
++        task = asyncio.create_task(serving.responses_full_generator(
++            SimpleNamespace(background=False), None, generation(), None,
++            "model", None, None, require_reasoning=False,
++        ))
++        await started.wait()
++        task.cancel()
++        with self.assertRaises(asyncio.CancelledError):
++            await task
++        self.assertTrue(closed.is_set())
++
++
++if __name__ == "__main__":
++    unittest.main()

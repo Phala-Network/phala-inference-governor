@@ -1,0 +1,161 @@
+{
+  "scope": "physical lines incl comments/blanks vs development baseline; source candidate excludes prior experimental modules",
+  "baseline": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+  "upstream_changes": [
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "added": 7,
+      "deleted": 0,
+      "sha256": "3a504447ee0c439e28a690110f325ab15748155c252d0c58b3f8177becfa163a"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/http_server.py",
+      "added": 10,
+      "deleted": 0,
+      "sha256": "b3bc5600e57ddad7d2d1221fa1d3f18b2306a84882655ccb3f328cbe671336f7"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
+      "added": 79,
+      "deleted": 0,
+      "sha256": "83b3ba1dee8359f257cbb397d95c43d075f7d56f9e0c50ea398e3e6cc522e32a"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "added": 9,
+      "deleted": 23,
+      "sha256": "5f5d5e9a8e6631e14fc4684ef4d559f4ffdcd5a7dd2e182079a57442a68575ee"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_completions.py",
+      "added": 9,
+      "deleted": 22,
+      "sha256": "1aa67fe4ce2dc1e47ba51ae2d13ebaca514c8e46aee62ecc288dd8d2d9f73400"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+      "added": 42,
+      "deleted": 20,
+      "sha256": "de41881ce5f9a88457814dd5eabf620c0e4de056cfb8a578ecf3ae7a492c828a"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/request_disconnect.py",
+      "added": 51,
+      "deleted": 0,
+      "sha256": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae"
+    },
+    {
+      "path": "python/sglang/srt/managers/communicator.py",
+      "added": 21,
+      "deleted": 8,
+      "sha256": "4806e3549fa339c0db9ee6710600dbe65eb3d781411dccdf04fe3f0da1a25730"
+    },
+    {
+      "path": "python/sglang/srt/managers/io_struct.py",
+      "added": 6,
+      "deleted": 3,
+      "sha256": "862500f3c9901cd5d5b00fae78ab1e1d024f072e649baf2887f9208cd1ac505b"
+    },
+    {
+      "path": "python/sglang/srt/managers/scheduler.py",
+      "added": 32,
+      "deleted": 4,
+      "sha256": "3fed4aa610567e94e5546a46659854a72c0a8b3846c8ceb9194950dcb9157341"
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_control_mixin.py",
+      "added": 1,
+      "deleted": 0,
+      "sha256": "f20c563b8fd442abf5ee263b734ad59c0447a06d9c719bdfb8db58455d4f5f61"
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_manager.py",
+      "added": 31,
+      "deleted": 10,
+      "sha256": "b7fac1931ab0296a80a4130b2333d841e595825a013e40e84541b134edc34a99"
+    },
+    {
+      "path": "python/sglang/srt/managers/tp_worker.py",
+      "added": 38,
+      "deleted": 0,
+      "sha256": "3a02f20dc90f4e96cc28128e187062bf591bdafe2641b2430c8acf3609ae51a9"
+    },
+    {
+      "path": "python/sglang/srt/managers/utils.py",
+      "added": 6,
+      "deleted": 1,
+      "sha256": "1e7c5c3f05f07df19593d50f7b36646290665082b88d70ceb8fb432302de5e8f"
+    },
+    {
+      "path": "python/sglang/srt/model_executor/forward_batch_info.py",
+      "added": 33,
+      "deleted": 8,
+      "sha256": "69cfe664d9e1def885b48012c1306453954b8dc218b8f0acd60d3acf4fe52a2e"
+    },
+    {
+      "path": "python/sglang/srt/sampling/sampling_batch_info.py",
+      "added": 16,
+      "deleted": 2,
+      "sha256": "3433da0bb9711629d9b9230b0ca03133fda7ecaaffe33472ba413081ecd8b57e"
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_common.py",
+      "added": 25,
+      "deleted": 0,
+      "sha256": "57850102d142d738c06cee2f9ad174d4c80a97e8ff240b5f336f9a3b5bf5de81"
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_v2.py",
+      "added": 49,
+      "deleted": 3,
+      "sha256": "db3d2c983bec080a0c969514597904ed40cce35cfb4ea30a91ddeec0bc39bb33"
+    },
+    {
+      "path": "python/sglang/srt/speculative/spec_utils.py",
+      "added": 11,
+      "deleted": 0,
+      "sha256": "e6cb161e6ae4722686edc055deebd827654769eab11200c57353008b14faecc3"
+    },
+    {
+      "path": "test/registered/unit/model_executor/test_draft_extend_device_metadata.py",
+      "added": 283,
+      "deleted": 0,
+      "sha256": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc"
+    },
+    {
+      "path": "test/registered/unit/model_executor/test_prefill_metadata_handoff.py",
+      "added": 316,
+      "deleted": 0,
+      "sha256": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0"
+    },
+    {
+      "path": "test/registered/unit/sampling/test_identity_grammar_mask.py",
+      "added": 193,
+      "deleted": 0,
+      "sha256": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e"
+    },
+    {
+      "path": "test/registered/unit/test_request_disconnect_cleanup.py",
+      "added": 240,
+      "deleted": 0,
+      "sha256": "02d78350fd9c373d7f88040d5968fa9fe1b82c03d422a0826eb11e55b32a2843"
+    }
+  ],
+  "plugin": {
+    "rust_runtime": 269,
+    "rust_tests": 116,
+    "python_runtime": 329,
+    "python_tests": 611
+  },
+  "runtime_total": {
+    "added": 1074,
+    "deleted": 104,
+    "upstream_files": 19
+  },
+  "test_total": {
+    "added": 1759,
+    "deleted": 0
+  },
+  "patch_sha256": "79a4d9dd8970c755099060c81463ab82fb16b9a7cf868fa3b97bca2ac0761103",
+  "validation_boundary": "CPU integration pending/independently reported; no live qualification or final release claim"
+}

@@ -1,0 +1,159 @@
+{
+  "passed": true,
+  "upstream": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+  "source_archive_sha256": "a72a21d658be3b9c27d6997ea89638bc3f7b920725328dec9994c3d03956458c",
+  "patches": [
+    {
+      "name": "0001-governor-hooks.patch",
+      "sha256": "81a31b96b35fd01427783eb14491c40fdfc076db7cdf8b329b5b1319d1878265"
+    },
+    {
+      "name": "0002-serving-cleanup.patch",
+      "sha256": "41c1988c55d8d1517c475717412d58afa1267d83d04b5e8fcc04c2dbafb70b6f"
+    },
+    {
+      "name": "0003-worker-metadata-grammar.patch",
+      "sha256": "cabae52d9b0ea5322ca891e8f8715e18fe021af907fb0668f352044e64335d29"
+    },
+    {
+      "name": "0004-lifecycle-observation.patch",
+      "sha256": "b740195c2b88a575bd22712f1840fa0edf83d51aea8f4ab89b6c9fbbb12ebef0"
+    },
+    {
+      "name": "0005-parallel-sampling-owners.patch",
+      "sha256": "1873f3775dabd7eaca28573a128c22a3a5c77b6f790d7df320b6e3a54d432232"
+    },
+    {
+      "name": "0006-unified-token-auth.patch",
+      "sha256": "799a1cf7892842ab51ef85953f1b3bc5e38287415cd573da6613acad71c1dfbf"
+    },
+    {
+      "name": "0007-qwen-serving-compatibility.patch",
+      "sha256": "da7830e38e1e032113fbd2fec6906af7cc978f52500171a14e6033106340755f"
+    }
+  ],
+  "reproduced_files": {
+    "python/sglang/srt/server_args.py": "4d14d4c96f934adda02e2854bed92a96bfd4f0a348ec055eb53530ba3420dbef",
+    "python/sglang/srt/entrypoints/grpc_bridge.py": "1a381bf9203f065de750ad15c7cf5da58e836796ff24bd181b130ff9d89ad6df",
+    "python/sglang/srt/entrypoints/request_disconnect.py": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae",
+    "python/sglang/srt/entrypoints/http_server.py": "b4a433d97b6feb6d375bd063cb61e46dcb36930fd5a51ba1bf9e235bce314de3",
+    "python/sglang/srt/entrypoints/engine.py": "6730b8060ffe7d4a21cc696d2729a7ebc9c767a6b72d0db07caddee68847ab4c",
+    "python/sglang/srt/sampling/sampling_batch_info.py": "549f951a90b626c0819f809beffa1cc9e7b7e28c75ccd8401615af68ed1c2c15",
+    "python/sglang/srt/model_executor/forward_batch_info.py": "6013b87aa2f009a92c49a5f026e27545751a6f617c9f129abd32501be05d8355",
+    "python/sglang/srt/constrained/xgrammar_backend.py": "881f337809959cf9800d91b4f42f6f33fd87fe081800e1ca010716f89fd2886b",
+    "python/sglang/srt/constrained/reasoner_grammar_backend.py": "513190d38ad91b86fbbc29b86b70a26f4f6ecac2278ad5b9c53bd5ac4fd99170",
+    "python/sglang/srt/constrained/xgrammar_schema.py": "e90fc1b03dcd476a84b22dbbce58394fcc3ce202e746e763fb938f73e8f990a0",
+    "python/sglang/srt/constrained/grammar_manager.py": "fbf74728c2ecff3a9bfccdd1e5ca2ecb9c3f7b983a3e5009654561d419019ad8",
+    "python/sglang/srt/managers/scheduler.py": "2e1e9a9cdbb92c137e07b195e0e933ee0c54dc4f42c8892e65ebb6507fe49e87",
+    "python/sglang/srt/managers/io_struct.py": "a29742a213878a2118b3ca2ca94e6e8567ff9c01d9efd071ee9db9be9d5d8eb2",
+    "python/sglang/srt/managers/tokenizer_control_mixin.py": "9a59dafbd7ecfbb4a5086eab3b25d510165023d4687c6ddbc983818322d45aed",
+    "python/sglang/srt/managers/tp_worker.py": "12ce75713498922e37b750acd5490631c54716dae0846cf7e5c7c77650f5e630",
+    "python/sglang/srt/managers/utils.py": "180c036f63fb7871c2b059fa07b3f965f292f42ba55baff72d5b6aed40d2f3c2",
+    "python/sglang/srt/managers/tokenizer_manager.py": "b88a51dd13973c455216893086ac40aef0d6328588e05236ff84c46c6859d37a",
+    "python/sglang/srt/managers/communicator.py": "485569fbf54ba0c104855b7884b4387bc8639c072b8cddfa40c4ea09de3b06fd",
+    "python/sglang/srt/observability/req_time_stats.py": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+    "python/sglang/srt/arg_groups/resolution_hooks.py": "786c44a12d09f8f6790a878d52de3beae813f2ad504e53a839f3122f27934c91",
+    "python/sglang/srt/arg_groups/token_auth.py": "8097ff2194fb744daefd570642776dd3cf8b66906527689f5ef12205827e3ea2",
+    "python/sglang/srt/arg_groups/pipeline.py": "fb97d89a548000ad77c210f14db55ea88276b76b0802c922f59a0775f366a5c4",
+    "python/sglang/srt/utils/watchdog.py": "50c0971b20ae0144f7a6bca99c971a019fef855af7fdb700002021ac4ed1f23c",
+    "python/sglang/srt/utils/common.py": "c903a2658512f9f3ee11df6aa8f85018d41095c3fffb28ee5490f72cc36357a5",
+    "python/sglang/srt/utils/cudacore_pyspy_dump_utils.py": "a6e2e8fd16bb8b139fc931e74ec164975f029593c377e9c96edec4be23586804",
+    "python/sglang/srt/speculative/eagle_worker_common.py": "890577356ce849ad01d8844815d62a3043171e8878e2fe0978d71e1bbf330b8f",
+    "python/sglang/srt/speculative/eagle_worker_v2.py": "4307a6cbe8cf283a1e3bf1934d7bb0c6dccf89f5da57433383d60572849283c1",
+    "python/sglang/srt/speculative/spec_utils.py": "8b0e38bc9e0dd9d44658e0e4aae77c5acabf47baa7be3379ffe9ade72567ca0e",
+    "python/sglang/srt/function_call/qwen3_coder_detector.py": "f3b91b4220c40aa7ba6dddede19fefaa6af434be222f2a6fba831ab226758374",
+    "python/sglang/srt/function_call/utils.py": "f2cec18d2bcd6ccd4c287acfea448318ce68edb4303d2513b5f75925a3a93d42",
+    "python/sglang/srt/entrypoints/openai/protocol.py": "1553b9b77c8923b8e9c1c424411120e4e220df2e30a8cc351d104e77e6f9b980",
+    "python/sglang/srt/entrypoints/openai/serving_responses.py": "bf29d460ce0310c17207db8292073ff77ba9e635bd1dc0fbaed07ba0d528ca5e",
+    "python/sglang/srt/entrypoints/openai/serving_base.py": "a50643d3aaa6f56a5a7879f29f5b55178619f313bd22ddebe6ac60b2d4fe87fb",
+    "python/sglang/srt/entrypoints/openai/serving_chat.py": "35685590b92b560db3b2d8d7c2fd177d6ed205b4284511e6fa6a4ecce395b3ce",
+    "python/sglang/srt/entrypoints/openai/serving_completions.py": "1f755b3d2318de78b7b14b14697fd162e6371d6a630bb3ed09693fadccf0ed97",
+    "python/sglang/srt/arg_groups/fields/serving.py": "03a721ad490804617ea252b1b96489e3504cb8b73a6f8ed7182ad40d4328fdf6",
+    "test/registered/unit/test_watchdog_fail_hard.py": "ec56ef057bfdda48476ea6ff7066a3922ef6ce90cecf4fc32d7e91218e4b460d",
+    "test/registered/unit/test_request_disconnect_cleanup.py": "727a5754be174300a0d435132d141cf31a305d8b3a10afbad2b000784293385e",
+    "test/registered/unit/sampling/test_identity_grammar_mask.py": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e",
+    "test/registered/unit/model_executor/test_prefill_metadata_handoff.py": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0",
+    "test/registered/unit/model_executor/test_draft_extend_device_metadata.py": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc",
+    "test/registered/unit/multimodal/test_base_processor_bad_input.py": "1d728f978e7a2a1fbbee5ae6c46347ae0b26b61b789b24fc895f29e80ba60085",
+    "test/registered/unit/constrained/test_xgrammar_unsupported_schema.py": "1a7aeff197e144e5fbfc9de6a614092a4d5803b0fd9e7a59845e27f1222e4c3e",
+    "test/registered/unit/constrained/test_reasoner_grammar_backend.py": "4db5d7461685e29ac3c1df03d43065a6e31b9e57e4e45f4e19638b1f075587f1",
+    "test/registered/unit/constrained/test_grammar_manager.py": "08aa95ee7af7f97445bc91aab0472007c7fbcef000a2818ae169346f0e814780",
+    "test/registered/unit/managers/test_io_struct.py": "1a98e218414402bc59c043ae825e8334b31f66e40ba03c9368a03c65ede6aab8",
+    "test/registered/unit/managers/test_parallel_sampling_owner_lifecycle.py": "1e7d387e3a0fe982f1ec02970ab055a85a250508178683f619fa62697a243ed3",
+    "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py": "895fbfa19aa01739fa1bbdfd6b4d89347f09dfe69cbb87d621066159f2ae8c82",
+    "test/registered/unit/managers/test_tokenizer_manager_pre_mm_length.py": "f350de97766790856d1dddf67cac9e61a29667253efdb19aff263107018efb3b",
+    "test/registered/unit/observability/test_queue_time_retract.py": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9",
+    "test/registered/unit/function_call/test_qwen_xml_empty_required_schema.py": "19b2428b22b23636e8c309c28562336e1c92320f414b6b387c245e631d083e3b",
+    "test/registered/unit/function_call/test_qwen3_coder_parallel_structural_tag.py": "8f9c2d1e1fb354d9e1fa595adcaf548586553b8f54ed119dab628cf637ee7b3f",
+    "test/registered/unit/function_call/test_normalize_json_schema_types.py": "c0e7489d9915c1813efc44bbda672415d3799a6666e69e9ed00da45af0c05c30",
+    "test/registered/unit/function_call/test_allowed_tools_choice.py": "b59361262a23d1f2919e8d6174111cf92342199ef5153aaedbf1abcba16284b6",
+    "test/registered/unit/function_call/test_qwen3_coder_schema_coercion.py": "53493727387ee48f7335cf4f4c2ae0d919970c82aee1b573bfa2eddb6d2399a1",
+    "test/registered/unit/utils/test_watchdog_diagnostics_and_reap.py": "5124d3c51e38b50e8984b56aa2d8d3e5fa50db64988bf9e5e989d04192607d0b",
+    "test/registered/unit/utils/test_token_env_auth.py": "72df8b3f5bf6b63430eeccfbc8cc35aae625cd002b27bc250aae06ee75320443",
+    "test/registered/unit/entrypoints/openai/test_serving_chat.py": "b7fb3b72fe11e8898ceab6a3336cef5997768baad2e512c20bfe38e3047464c0",
+    "test/registered/unit/entrypoints/openai/test_protocol.py": "57c6d0815b32813df88857c58e0db28d9da0447254c7127c1aec9457c054d7e2"
+  },
+  "generic_checks": [
+    {
+      "patch": "0001-governor-hooks.patch",
+      "check_only": true,
+      "exit": 0
+    },
+    {
+      "patch": "0001-governor-hooks.patch",
+      "check_only": false,
+      "exit": 0
+    },
+    {
+      "patch": "0002-serving-cleanup.patch",
+      "check_only": true,
+      "exit": 0
+    },
+    {
+      "patch": "0002-serving-cleanup.patch",
+      "check_only": false,
+      "exit": 0
+    },
+    {
+      "patch": "0003-worker-metadata-grammar.patch",
+      "check_only": true,
+      "exit": 0
+    },
+    {
+      "patch": "0003-worker-metadata-grammar.patch",
+      "check_only": false,
+      "exit": 0
+    },
+    {
+      "patch": "0004-lifecycle-observation.patch",
+      "check_only": true,
+      "exit": 0
+    },
+    {
+      "patch": "0004-lifecycle-observation.patch",
+      "check_only": false,
+      "exit": 0
+    },
+    {
+      "patch": "0005-parallel-sampling-owners.patch",
+      "check_only": true,
+      "exit": 0
+    },
+    {
+      "patch": "0005-parallel-sampling-owners.patch",
+      "check_only": false,
+      "exit": 0
+    },
+    {
+      "patch": "0006-unified-token-auth.patch",
+      "check_only": true,
+      "exit": 0
+    },
+    {
+      "patch": "0006-unified-token-auth.patch",
+      "check_only": false,
+      "exit": 0
+    }
+  ],
+  "scope": "Ordered patch and AST reproduction of frozen changed-file union; source test evidence and final-image checks are separate"
+}

@@ -1,0 +1,80 @@
+{
+  "baseline": {
+    "report_sha256": "38b567f658bc18344a5b30b22d7693569b2060c1670da136a86f2f3480def57c",
+    "source": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-queue-telemetry-r1/source",
+    "tokenizer_manager_sha256": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f"
+  },
+  "bundle": {
+    "bytes": 39289,
+    "name": "n2-owner-lifecycle-cpu-r2.tgz",
+    "sha256": "294a083c6537ab1f8117e44a7ceb7a91b70c2df15cbca757d82d342d1d5f4e10"
+  },
+  "green": [
+    {
+      "exit": 0,
+      "failed_summary": null,
+      "log_bytes": 1176,
+      "log_sha256": "d4b0812c57687832f0df67ce0cf2a0287e87d1512beaa7e0b6e921fe85f95579",
+      "name": "lifecycle-green",
+      "ok": true,
+      "skipped": 0,
+      "tests": 2
+    },
+    {
+      "exit": 0,
+      "failed_summary": null,
+      "log_bytes": 7964,
+      "log_sha256": "137fc147cb122ae71252f2d972d5e560f3510ff34a70f39b97980d2e2a0524ff",
+      "name": "owner",
+      "ok": true,
+      "skipped": 0,
+      "tests": 28
+    },
+    {
+      "exit": 0,
+      "failed_summary": null,
+      "log_bytes": 928,
+      "log_sha256": "29f8080c4aff4ce596d720d2c730b78a36146cfc27dd66a72a9d055650d1fea6",
+      "name": "timing",
+      "ok": true,
+      "skipped": 0,
+      "tests": 4
+    }
+  ],
+  "green_runner": {
+    "exit": 0,
+    "id": "39dd572158668993a7a4b2edcf65cf071f73eb512ddd425fd7cb4a0872e667c0",
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/n2-owner-lifecycle-cpu-r3/evidence/green.log",
+    "log_sha256": "e8b483f8699d3d93b7d5718df942681b4dfbd195e3be6012c689c1c164c9a8b9",
+    "oom_killed": false
+  },
+  "image": "sha256:c4fe40487178fd7738600562c114e2198d281d5ca6c0f5a265019369f6af76c4",
+  "passed": true,
+  "red": {
+    "exit": 1,
+    "expected_failure": true,
+    "failed_summary": "failures=8",
+    "log_bytes": 9679,
+    "log_sha256": "a152599683de3e76535275ad420bce0775fad6771c471c378625fa7c1b50468a",
+    "name": "lifecycle-red",
+    "ok": false,
+    "skipped": 0,
+    "tests": 2
+  },
+  "red_runner": {
+    "exit": 1,
+    "id": "72232065b51e2566202adbbf8af39597808fe47d3934c5dec91ec5f46fcdb854",
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/n2-owner-lifecycle-cpu-r3/evidence/red.log",
+    "log_sha256": "bf92e825c2b16cd2156a53542989e531b7d15021195aaf4bfd7542803a045e18",
+    "oom_killed": false
+  },
+  "run_label": "n2-owner-lifecycle-cpu-r3",
+  "scope": "805 fixed-c4 CPU-only n>1 ownership red/green regression. Both sources are isolated copies; no live source, service, route, deployment, or GPU execution is changed.",
+  "source_hashes": {
+    "green_tokenizer_manager": "0928a375fcb3f03fca1230c3a7f0af555bc7054f571fbb01a564fab31da32619",
+    "lifecycle_test": "1e7d387e3a0fe982f1ec02970ab055a85a250508178683f619fa62697a243ed3",
+    "owner_test": "895fbfa19aa01739fa1bbdfd6b4d89347f09dfe69cbb87d621066159f2ae8c82",
+    "red_tokenizer_manager": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f",
+    "timing_test": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9"
+  }
+}

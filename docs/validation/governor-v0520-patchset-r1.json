@@ -1,0 +1,160 @@
+{
+  "upstream": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+  "patches": {
+    "0001-governor-hooks.patch": "81a31b96b35fd01427783eb14491c40fdfc076db7cdf8b329b5b1319d1878265",
+    "0002-serving-cleanup.patch": "41c1988c55d8d1517c475717412d58afa1267d83d04b5e8fcc04c2dbafb70b6f",
+    "0003-worker-metadata-grammar.patch": "cabae52d9b0ea5322ca891e8f8715e18fe021af907fb0668f352044e64335d29"
+  },
+  "files": [
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "added": 7,
+      "deleted": 0,
+      "input_sha256": "ddafbeda50171ea7d7581bcc069810d3b8ee39e2b8dc55152143dca4c456ba76"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/http_server.py",
+      "added": 10,
+      "deleted": 0,
+      "input_sha256": "d3b74c12eea9745e11d4e04064155a494166fae9f5fe5a7a61812ff1783b1cd7"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
+      "added": 79,
+      "deleted": 0,
+      "input_sha256": "a50643d3aaa6f56a5a7879f29f5b55178619f313bd22ddebe6ac60b2d4fe87fb"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "added": 9,
+      "deleted": 23,
+      "input_sha256": "86f549d68de29ca703154b47f64171f4fd06013a6099e09475f46dd3e5008169"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_completions.py",
+      "added": 9,
+      "deleted": 22,
+      "input_sha256": "1f755b3d2318de78b7b14b14697fd162e6371d6a630bb3ed09693fadccf0ed97"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+      "added": 73,
+      "deleted": 49,
+      "input_sha256": "bf29d460ce0310c17207db8292073ff77ba9e635bd1dc0fbaed07ba0d528ca5e"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/request_disconnect.py",
+      "added": 51,
+      "deleted": 0,
+      "input_sha256": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae"
+    },
+    {
+      "path": "python/sglang/srt/managers/communicator.py",
+      "added": 21,
+      "deleted": 8,
+      "input_sha256": "485569fbf54ba0c104855b7884b4387bc8639c072b8cddfa40c4ea09de3b06fd"
+    },
+    {
+      "path": "python/sglang/srt/managers/io_struct.py",
+      "added": 6,
+      "deleted": 3,
+      "input_sha256": "9507cada686ff1f76de4185d71bc1775ddcb420691092ac3814985b86bc30038"
+    },
+    {
+      "path": "python/sglang/srt/managers/scheduler.py",
+      "added": 37,
+      "deleted": 4,
+      "input_sha256": "2e1e9a9cdbb92c137e07b195e0e933ee0c54dc4f42c8892e65ebb6507fe49e87"
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_control_mixin.py",
+      "added": 1,
+      "deleted": 0,
+      "input_sha256": "9a59dafbd7ecfbb4a5086eab3b25d510165023d4687c6ddbc983818322d45aed"
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_manager.py",
+      "added": 31,
+      "deleted": 10,
+      "input_sha256": "de2e45059a3b1abe6e61088510b9e3c7dd3ccffa1c8ddebd48ee42b58e9ae4e5"
+    },
+    {
+      "path": "python/sglang/srt/managers/tp_worker.py",
+      "added": 38,
+      "deleted": 0,
+      "input_sha256": "12ce75713498922e37b750acd5490631c54716dae0846cf7e5c7c77650f5e630"
+    },
+    {
+      "path": "python/sglang/srt/managers/utils.py",
+      "added": 6,
+      "deleted": 1,
+      "input_sha256": "180c036f63fb7871c2b059fa07b3f965f292f42ba55baff72d5b6aed40d2f3c2"
+    },
+    {
+      "path": "python/sglang/srt/model_executor/forward_batch_info.py",
+      "added": 33,
+      "deleted": 8,
+      "input_sha256": "6013b87aa2f009a92c49a5f026e27545751a6f617c9f129abd32501be05d8355"
+    },
+    {
+      "path": "python/sglang/srt/sampling/sampling_batch_info.py",
+      "added": 16,
+      "deleted": 2,
+      "input_sha256": "549f951a90b626c0819f809beffa1cc9e7b7e28c75ccd8401615af68ed1c2c15"
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_common.py",
+      "added": 25,
+      "deleted": 0,
+      "input_sha256": "890577356ce849ad01d8844815d62a3043171e8878e2fe0978d71e1bbf330b8f"
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_v2.py",
+      "added": 45,
+      "deleted": 2,
+      "input_sha256": "4307a6cbe8cf283a1e3bf1934d7bb0c6dccf89f5da57433383d60572849283c1"
+    },
+    {
+      "path": "python/sglang/srt/speculative/spec_utils.py",
+      "added": 11,
+      "deleted": 0,
+      "input_sha256": "8b0e38bc9e0dd9d44658e0e4aae77c5acabf47baa7be3379ffe9ade72567ca0e"
+    },
+    {
+      "path": "test/registered/unit/model_executor/test_draft_extend_device_metadata.py",
+      "added": 283,
+      "deleted": 0,
+      "input_sha256": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc"
+    },
+    {
+      "path": "test/registered/unit/model_executor/test_prefill_metadata_handoff.py",
+      "added": 316,
+      "deleted": 0,
+      "input_sha256": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0"
+    },
+    {
+      "path": "test/registered/unit/sampling/test_identity_grammar_mask.py",
+      "added": 193,
+      "deleted": 0,
+      "input_sha256": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e"
+    },
+    {
+      "path": "test/registered/unit/test_request_disconnect_cleanup.py",
+      "added": 308,
+      "deleted": 0,
+      "input_sha256": "727a5754be174300a0d435132d141cf31a305d8b3a10afbad2b000784293385e"
+    }
+  ],
+  "reproduces_selected_files": 25,
+  "normalization": "LF text comparison; raw candidate hashes recorded separately",
+  "validation": "patch reproduction only; see separate CPU integration report",
+  "runtime": {
+    "added": 508,
+    "deleted": 132,
+    "files": 19
+  },
+  "tests": {
+    "added": 1100,
+    "deleted": 0
+  }
+}

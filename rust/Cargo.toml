@@ -1,0 +1,14 @@
+[package]
+name = "pig_governor_core"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Actual Decode feedback and bounded scheduling advice for PIG"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+panic = "unwind"
+
+[workspace]

@@ -1,0 +1,82 @@
+{
+  "passed": true,
+  "scope": "805 fixed-c4 runc GPU-void one-CPU auth/ownership tests in isolated source; no live mutation",
+  "image": "sha256:c4fe40487178fd7738600562c114e2198d281d5ca6c0f5a265019369f6af76c4",
+  "prior_report_sha256": "5e1fb332b3adf9746a42ab75cb8185a6a2dcd61393cf04a4b81ae6cf7221e49e",
+  "prior_failure": "Frozen n2 test had no __main__; direct invocation ran zero tests. Re-run only this group with unittest discovery.",
+  "source_hashes": {
+    "python/sglang/srt/arg_groups/token_auth.py": "8097ff2194fb744daefd570642776dd3cf8b66906527689f5ef12205827e3ea2",
+    "python/sglang/srt/arg_groups/fields/serving.py": "03a721ad490804617ea252b1b96489e3504cb8b73a6f8ed7182ad40d4328fdf6",
+    "python/sglang/srt/arg_groups/pipeline.py": "fb97d89a548000ad77c210f14db55ea88276b76b0802c922f59a0775f366a5c4",
+    "python/sglang/srt/arg_groups/resolution_hooks.py": "786c44a12d09f8f6790a878d52de3beae813f2ad504e53a839f3122f27934c91",
+    "python/sglang/srt/server_args.py": "4d14d4c96f934adda02e2854bed92a96bfd4f0a348ec055eb53530ba3420dbef",
+    "python/sglang/srt/entrypoints/engine.py": "6730b8060ffe7d4a21cc696d2729a7ebc9c767a6b72d0db07caddee68847ab4c",
+    "python/sglang/srt/entrypoints/grpc_bridge.py": "1a381bf9203f065de750ad15c7cf5da58e836796ff24bd181b130ff9d89ad6df",
+    "python/sglang/srt/entrypoints/http_server.py": "b4a433d97b6feb6d375bd063cb61e46dcb36930fd5a51ba1bf9e235bce314de3",
+    "python/sglang/srt/managers/tokenizer_manager.py": "b88a51dd13973c455216893086ac40aef0d6328588e05236ff84c46c6859d37a",
+    "test/registered/unit/utils/test_token_env_auth.py": "72df8b3f5bf6b63430eeccfbc8cc35aae625cd002b27bc250aae06ee75320443",
+    "test/registered/unit/managers/test_parallel_sampling_owner_lifecycle.py": "3c7f36bb7deb9b1d0acd4e623c00e7dbac2279a60fbc6256bf5a398a4add004a",
+    "python/sglang/srt/observability/req_time_stats.py": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+    "test/registered/unit/observability/test_queue_time_retract.py": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9"
+  },
+  "bundle_sha256": "25f5427aab159ab5e9922f28ee9d316401a14e124095341f62694d0e9e3c6dc8",
+  "groups": [
+    {
+      "name": "token-auth",
+      "exit": 0,
+      "tests": 11,
+      "skipped": 0,
+      "log_sha256": "2572eae0a632a64fcabb82fd1f9ad8adf82747519bd714ad0feeb3d801a14f63",
+      "passed": true
+    },
+    {
+      "name": "http-auth",
+      "exit": 0,
+      "tests": 6,
+      "skipped": 0,
+      "log_sha256": "dcd2147edfda2291b456dfb6d9f3021f0fed07760d5a1c8869fc5446f30e28fe",
+      "passed": true
+    },
+    {
+      "name": "auth-middleware",
+      "exit": 0,
+      "tests": 27,
+      "skipped": 0,
+      "log_sha256": "cf4ed411a774fcf6e7d48b123e9743f6a9e9c58f19054213a5e9bfa01ca5266f",
+      "passed": true
+    },
+    {
+      "name": "resolution-hooks",
+      "exit": 0,
+      "tests": 10,
+      "skipped": 0,
+      "log_sha256": "9207855d57fb343a2b704c94f200bca36b8bc8e0f0898939887738d58d896661",
+      "passed": true
+    },
+    {
+      "name": "owner",
+      "exit": 0,
+      "tests": 28,
+      "skipped": 0,
+      "log_sha256": "018eeac640cb2c3a4e7c836b695200418c41b7e34d4dbdd7a0fa7033cfd78450",
+      "passed": true
+    },
+    {
+      "name": "queue-time",
+      "exit": 0,
+      "tests": 4,
+      "skipped": 0,
+      "log_sha256": "289c6f70fad973d2f425caad84663970cfcb21b9a532af1656b856dc5dae83ec",
+      "passed": true
+    },
+    {
+      "name": "parallel-owner",
+      "exit": 0,
+      "tests": 2,
+      "skipped": 0,
+      "log_sha256": "dfd283ebb1b9fe0e87242084698fe04c558b1c401aa5916a6671faed8e9b3478",
+      "passed": true
+    }
+  ],
+  "total_tests": 88
+}

@@ -1,0 +1,7 @@
+{
+  "id": "419484da63e7a1c624532e7fd78d564e7560a3b0f42bd3e1a32ce8c1667e8e07",
+  "exit": 0,
+  "oom_killed": false,
+  "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-routing-r4/evidence/tests.log",
+  "log_sha256": "7da0b5f6f21bc1f12d5705096bd156f2595a7b35b0fa8315a43ccc0aa1e68ea1"
+}

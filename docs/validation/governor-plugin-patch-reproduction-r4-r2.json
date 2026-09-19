@@ -1,0 +1,81 @@
+{
+  "passed": true,
+  "files_compared": 23,
+  "patch_sha256": "6601b2dfeacd63a52f019ca1f449e2acda89b4e35feead62f93d895e58bfa364",
+  "normalization": "Explicitly normalize baseline CRLF to LF before applying text patch",
+  "baseline": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+  "baseline_line_endings": [
+    {
+      "path": "test/registered/unit/managers/test_prefill_adder.py",
+      "crlf": 882
+    },
+    {
+      "path": "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py",
+      "crlf": 784
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/http_server.py",
+      "crlf": 2850
+    },
+    {
+      "path": "python/sglang/srt/sampling/sampling_batch_info.py",
+      "crlf": 517
+    },
+    {
+      "path": "python/sglang/srt/managers/utils.py",
+      "crlf": 409
+    },
+    {
+      "path": "python/sglang/srt/managers/tp_worker.py",
+      "crlf": 730
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_manager.py",
+      "crlf": 3736
+    },
+    {
+      "path": "python/sglang/srt/managers/scheduler.py",
+      "crlf": 5640
+    },
+    {
+      "path": "python/sglang/srt/managers/io_struct.py",
+      "crlf": 2499
+    },
+    {
+      "path": "python/sglang/srt/model_executor/forward_batch_info.py",
+      "crlf": 1863
+    },
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "crlf": 356
+    },
+    {
+      "path": "python/sglang/srt/speculative/spec_utils.py",
+      "crlf": 1068
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_v2.py",
+      "crlf": 1602
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_common.py",
+      "crlf": 660
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "crlf": 3114
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
+      "crlf": 293
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+      "crlf": 2604
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_completions.py",
+      "crlf": 689
+    }
+  ]
+}

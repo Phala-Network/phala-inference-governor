@@ -1,0 +1,180 @@
+{
+  "passed": true,
+  "groups": [
+    {
+      "exit": 0,
+      "tests": 34,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "81257553dcbc82fd358954315f20ae903d6a86f43e3ea57370c3a4ff7b1c2016"
+    },
+    {
+      "exit": 0,
+      "tests": 11,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "6fdb05be88baac11f0ecc60d02b1f39b8877415a317fba2be04d655973b64e3f"
+    },
+    {
+      "exit": 0,
+      "tests": 26,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "139dbdb270d6b7a05fa7422f8644641954b554b6e01edf3f5a5e864d7ae1c1db"
+    },
+    {
+      "exit": 0,
+      "tests": 30,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "af28e37e39c6665f40911c86ce342c98203c4a11a54662c9e7f6f09153bb5477"
+    },
+    {
+      "exit": 0,
+      "tests": 10,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "121b127e558bd53a715442f906c1cc8e83474538b807c693329996df8c2aa639"
+    },
+    {
+      "exit": 0,
+      "tests": 6,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "8f37cca1d75e7236a2ee4e0c6c6dd45ed92caeace1effcd0926002d69a1252c7"
+    },
+    {
+      "exit": 0,
+      "tests": 9,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "ok": true,
+      "passed": true,
+      "sha256": "f82ed2badd0179cce19eebef4988a14faaf96bec0c06e6ecfa835e5e1427f18c"
+    }
+  ],
+  "tests": {
+    "id": "fb7d322ac0ec2964a3c36d076102d28850ae094b404d904f11a6d9ee55742c71",
+    "exit": 0,
+    "oom_killed": false,
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-v0520-candidate-r1/evidence/tests.log",
+    "log_sha256": "c2f87c730b7e70e403ddd96d808f1ad46b75ae02ce6775d46b5a7f629aefdc6f"
+  },
+  "before": {
+    "identity": {
+      "lineage_schema": "pig.native-soft-attribution-lineage.v1",
+      "backend_id": "a8b9ccf60ae4ae9c53ba0b8b693ccfd192976d30d9965b7d41f6dc73b082b713",
+      "backend_started_at": "2026-09-18T12:38:56.80808088Z",
+      "backend_epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "adapter_id": "5784ec424188f4d0c69db59da3c4aabe6038eaf04005a2f7072b91880a47b21c",
+      "adapter_started_at": "2026-09-18T07:39:43.276948578Z",
+      "adapter_image": "sha256:e70a4425bb38f3ded450d5e95840d148018a72809e7eab64360d5c1d5feb6024",
+      "adapter_binary_sha256": "cf73daa4d0746222084164ab5edfe7b1b07d156886af9723d69eb2ac4bd0a8d1",
+      "prior_model_started_sha256": "38ecb88c25074cbb1c31b58ccad0646e412d08e48c462cd151b5490812c93029",
+      "historical_adapter_transition_sha256": "940f6626e9b4460e15f0ccba9888a76c51efd48c4002db6c7af499568ae6348b",
+      "adapter_unchanged": true
+    },
+    "counters": {
+      "epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "revision": 1,
+      "tps_reference": 35.0,
+      "accepted_total": 1056,
+      "scheduler_successful_completions": 1055,
+      "scheduler_successful_completed_tokens": 221481
+    }
+  },
+  "after": {
+    "identity": {
+      "lineage_schema": "pig.native-soft-attribution-lineage.v1",
+      "backend_id": "a8b9ccf60ae4ae9c53ba0b8b693ccfd192976d30d9965b7d41f6dc73b082b713",
+      "backend_started_at": "2026-09-18T12:38:56.80808088Z",
+      "backend_epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "adapter_id": "5784ec424188f4d0c69db59da3c4aabe6038eaf04005a2f7072b91880a47b21c",
+      "adapter_started_at": "2026-09-18T07:39:43.276948578Z",
+      "adapter_image": "sha256:e70a4425bb38f3ded450d5e95840d148018a72809e7eab64360d5c1d5feb6024",
+      "adapter_binary_sha256": "cf73daa4d0746222084164ab5edfe7b1b07d156886af9723d69eb2ac4bd0a8d1",
+      "prior_model_started_sha256": "38ecb88c25074cbb1c31b58ccad0646e412d08e48c462cd151b5490812c93029",
+      "historical_adapter_transition_sha256": "940f6626e9b4460e15f0ccba9888a76c51efd48c4002db6c7af499568ae6348b",
+      "adapter_unchanged": true
+    },
+    "counters": {
+      "epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "revision": 1,
+      "tps_reference": 35.0,
+      "accepted_total": 1056,
+      "scheduler_successful_completions": 1055,
+      "scheduler_successful_completed_tokens": 221481
+    }
+  },
+  "input_sha256": "6d11d8dd6556e155b9d1df36867bdd666879398bc44ad648765aa2d6ab4c56d3",
+  "upstream": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+  "source_hashes": {
+    "test/registered/unit/test_request_disconnect_cleanup.py": "727a5754be174300a0d435132d141cf31a305d8b3a10afbad2b000784293385e",
+    "test/registered/unit/managers/test_prefill_adder.py": "fbe8dc0a4e7c681d57e124269e31207be2eb46506e57d98866c67a0bdd9ca507",
+    "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py": "a43e122e8f30908b916f1de8d6afe76a182611a05e7fa2aeb03d22f4350c82b2",
+    "test/registered/unit/model_executor/test_draft_extend_device_metadata.py": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc",
+    "test/registered/unit/model_executor/test_prefill_metadata_handoff.py": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0",
+    "test/registered/unit/sampling/test_identity_grammar_mask.py": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e",
+    "python/sglang/srt/managers/io_struct.py": "9507cada686ff1f76de4185d71bc1775ddcb420691092ac3814985b86bc30038",
+    "python/sglang/srt/managers/tokenizer_manager.py": "de2e45059a3b1abe6e61088510b9e3c7dd3ccffa1c8ddebd48ee42b58e9ae4e5",
+    "python/sglang/srt/managers/utils.py": "180c036f63fb7871c2b059fa07b3f965f292f42ba55baff72d5b6aed40d2f3c2",
+    "python/sglang/srt/managers/scheduler.py": "2e1e9a9cdbb92c137e07b195e0e933ee0c54dc4f42c8892e65ebb6507fe49e87",
+    "python/sglang/srt/managers/tokenizer_control_mixin.py": "9a59dafbd7ecfbb4a5086eab3b25d510165023d4687c6ddbc983818322d45aed",
+    "python/sglang/srt/managers/communicator.py": "485569fbf54ba0c104855b7884b4387bc8639c072b8cddfa40c4ea09de3b06fd",
+    "python/sglang/srt/managers/tp_worker.py": "12ce75713498922e37b750acd5490631c54716dae0846cf7e5c7c77650f5e630",
+    "python/sglang/srt/entrypoints/http_server.py": "d3b74c12eea9745e11d4e04064155a494166fae9f5fe5a7a61812ff1783b1cd7",
+    "python/sglang/srt/entrypoints/request_disconnect.py": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae",
+    "python/sglang/srt/model_executor/forward_batch_info.py": "6013b87aa2f009a92c49a5f026e27545751a6f617c9f129abd32501be05d8355",
+    "python/sglang/srt/speculative/eagle_worker_v2.py": "4307a6cbe8cf283a1e3bf1934d7bb0c6dccf89f5da57433383d60572849283c1",
+    "python/sglang/srt/speculative/eagle_worker_common.py": "890577356ce849ad01d8844815d62a3043171e8878e2fe0978d71e1bbf330b8f",
+    "python/sglang/srt/speculative/spec_utils.py": "8b0e38bc9e0dd9d44658e0e4aae77c5acabf47baa7be3379ffe9ade72567ca0e",
+    "python/sglang/srt/constrained/reasoner_grammar_backend.py": "ddafbeda50171ea7d7581bcc069810d3b8ee39e2b8dc55152143dca4c456ba76",
+    "python/sglang/srt/sampling/sampling_batch_info.py": "549f951a90b626c0819f809beffa1cc9e7b7e28c75ccd8401615af68ed1c2c15",
+    "python/sglang/srt/entrypoints/openai/serving_responses.py": "bf29d460ce0310c17207db8292073ff77ba9e635bd1dc0fbaed07ba0d528ca5e",
+    "python/sglang/srt/entrypoints/openai/serving_completions.py": "1f755b3d2318de78b7b14b14697fd162e6371d6a630bb3ed09693fadccf0ed97",
+    "python/sglang/srt/entrypoints/openai/serving_base.py": "a50643d3aaa6f56a5a7879f29f5b55178619f313bd22ddebe6ac60b2d4fe87fb",
+    "python/sglang/srt/entrypoints/openai/serving_chat.py": "86f549d68de29ca703154b47f64171f4fd06013a6099e09475f46dd3e5008169"
+  },
+  "plugin_hashes": {
+    "tests/test_native_scheduler.py": "46cae1563708f428e56dd73838bc716bdbbf6b9e35bbf9a18122bec3b416f20d",
+    "tests/test_ffi.py": "0ab789f7b29676a4b1b89c8db60cc2c6a2065e4502d8828810bf989f847e8c49",
+    "tests/test_scheduler.py": "5f7a2bda15ed5f15428ce2b73b9df55c619c9e54e31ac99cd58eb8061c26e684",
+    "tests/test_sglang.py": "555266d3812484f8ef24015b9207d4f9fad822a8a1110ca4d92fd8df31db258d",
+    "tests/test_http_routing.py": "74b7b7b2be72178e0f245f46970380e131bcf8ecab2c8296f2030e5f8a50cab1",
+    "tests/test_control_correlation.py": "1c34f1363d7d0ffc5c526e070b11608127fd4e32c3e9c8b0a2810503a8cabe22",
+    "tests/test_http.py": "d019c9421f2d3723f11ef09471abcd3b4591fac2b19e8adc45d73a17660c9ccf",
+    "rust/Cargo.lock": "8e499ed9f9543d8faf32dbfd6eec6e677105de20fd44cfcd0df9413f1c72a518",
+    "rust/Cargo.toml": "fc41aa7e8a84c47567f0565aad7d067060140d345f3fee9b9d97127464809c6e",
+    "lib/libpig_governor_core.so": "b2c02bae95b1fe730a7e22806cfdf483bab85bd4b419f85f82f4f563bb4ec5ad",
+    "python/pig_governor/__init__.py": "59f80138a82d418c111ef072c2477b52c1cb0c4293384aba9635088d0313b3da",
+    "python/pig_governor/sglang.py": "8032400a49f0a2014a645d1ad62e43bc8aa9693e18f66ed076b418fb5f363506",
+    "python/pig_governor/admin.py": "8653d45120c70db713e4fae2c2951a8f64248493a5ac6dc435d8421dffdf2656",
+    "python/pig_governor/http.py": "8671bce89f60da08894f06ae5bff939aee9e35863b78f968291c4adf00cf8575",
+    "python/pig_governor/scheduler.py": "d9c23b8d876f0d9b6e943bb4ca700b4b787a3f8ec2216abd3622f6655e005511",
+    "python/pig_governor/core.py": "ff25544ad4342746b95588eef8c91407f837e9c467f5c6b9e55a20c7ea56cde4",
+    "rust/src/lib.rs": "53c2ecfbccb9a57ce0945d22014844a27a8a8020bdecef27cacc6f9692259cb0",
+    "rust/include/pig_governor.h": "defa7aa51c071d1825273b747c5b07dd825fd0b9563b1e06dae2bab7da07bb7f"
+  },
+  "rust_reused_from": "governor-control-r5: exact source/header/manifest/lock match; previously 7 Rust tests passed",
+  "library_sha256": "b2c02bae95b1fe730a7e22806cfdf483bab85bd4b419f85f82f4f563bb4ec5ad",
+  "scope": "v0520 native-module CPU tests using existing fixed-image dependencies and upstream CPU test kernel stubs; not new GPU dependency/model/CC qualification"
+}

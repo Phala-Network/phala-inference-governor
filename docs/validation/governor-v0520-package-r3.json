@@ -1,0 +1,74 @@
+{
+  "passed": true,
+  "runner": {
+    "id": "64c20ab8b7c6ac3f7f7146eb83b7a598fa78ed712094458ee0d1c20492cca964",
+    "exit": 0,
+    "oom_killed": false,
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-v0520-launch-r3/evidence/package.log",
+    "log_sha256": "5c73d72ac5fc2be388350486682f60f8da690ac1daef75edce164fe01c918e67"
+  },
+  "wheels": {
+    "sglang-0.5.20+phala.govdev2-py3-none-any.whl": "64d282781e6d842c0b76a28a87d8cce24f119b588e7faf2f89638856c3a8fb93"
+  },
+  "probe": {
+    "version": "0.5.20+phala.govdev2",
+    "module": "/candidate/site/sglang/__init__.py",
+    "source_hashes": {
+      "python/sglang/srt/entrypoints/http_server.py": "e6e53aa70413271b15d65c22176056face97ebc575b2358c384669f99558b04d",
+      "python/sglang/srt/managers/tokenizer_manager.py": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f",
+      "python/sglang/srt/observability/req_time_stats.py": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad"
+    },
+    "empty_owner_summary": {
+      "total": 0,
+      "undelivered": 0,
+      "dispatched": 0,
+      "abort_pending": 0,
+      "finished": 0,
+      "encoder_dispatch_pending": 0
+    },
+    "first_queue_time": 3,
+    "current_queue_timestamp": 10,
+    "scope": "Installed CPU probe with upstream kernel stubs; no GPU acceptance"
+  },
+  "source_validation_sha256": "363236b867fca9c238280a1f7949b139eb40ea4b806b991d3dbfa682cf46938c",
+  "source_hashes": {
+    "python/sglang/srt/entrypoints/http_server.py": "e6e53aa70413271b15d65c22176056face97ebc575b2358c384669f99558b04d",
+    "python/sglang/srt/managers/tokenizer_manager.py": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f",
+    "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py": "895fbfa19aa01739fa1bbdfd6b4d89347f09dfe69cbb87d621066159f2ae8c82",
+    "python/sglang/srt/observability/req_time_stats.py": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+    "test/registered/unit/observability/test_queue_time_retract.py": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9"
+  },
+  "before": {
+    "sglang-qwen3-8-27b-native-qos": {
+      "id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+      "started": "2026-09-19T10:04:40.659380842Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    },
+    "phala-inference-guard-qwen3-8-27b-native-qos": {
+      "id": "1a9bae9fc56f316f7ce92fd84e2d88adc670726f4880e357762d7e30b9ef0fda",
+      "started": "2026-09-19T10:04:41.124990164Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    }
+  },
+  "after": {
+    "sglang-qwen3-8-27b-native-qos": {
+      "id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+      "started": "2026-09-19T10:04:40.659380842Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    },
+    "phala-inference-guard-qwen3-8-27b-native-qos": {
+      "id": "1a9bae9fc56f316f7ce92fd84e2d88adc670726f4880e357762d7e30b9ef0fda",
+      "started": "2026-09-19T10:04:41.124990164Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    }
+  },
+  "scope": "Offline staged govdev2 wheel; running govdev1 and TAIL unchanged. Exact recovery and fresh drains still required before replacement."
+}

@@ -1,0 +1,7 @@
+{
+  "manifest_sha256": "882adcdc8f15a0fefcd33cd8ace62e5ee0441cabdc0dd8dc14aec07801d97f00",
+  "archive_sha256": "f06e2f0839fc2887f07c1a80812f0ece5dfe722aedb8a1b5886a1966953cd96d",
+  "method": "download SHA256, extract archive, verify every manifest payload SHA256",
+  "verified_payload_files": 26,
+  "passed": true
+}

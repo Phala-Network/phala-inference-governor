@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "groups": [
+    {
+      "name": "timing",
+      "exit": 0,
+      "tests": 4,
+      "log_sha256": "29f8080c4aff4ce596d720d2c730b78a36146cfc27dd66a72a9d055650d1fea6"
+    },
+    {
+      "name": "owner",
+      "exit": 0,
+      "tests": 28,
+      "log_sha256": "95569afa1e5317f19ac4e34a5c3d420007577b1c1085c62b0686bb05a9b5ec9e"
+    }
+  ],
+  "runner": {
+    "id": "501e7e70460cfe277544fbfa147909bbca65735835ff05516e43f355ae982e23",
+    "exit": 0,
+    "oom_killed": false,
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-queue-telemetry-r1/evidence/tests.log",
+    "log_sha256": "efa9e0fa8dceeab3c296b212131c14948fd3e80969770cc7234b1d80b555c3fa"
+  },
+  "before": {
+    "sglang-qwen3-8-27b-native-qos": {
+      "id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+      "started": "2026-09-19T10:04:40.659380842Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    },
+    "phala-inference-guard-qwen3-8-27b-native-qos": {
+      "id": "1a9bae9fc56f316f7ce92fd84e2d88adc670726f4880e357762d7e30b9ef0fda",
+      "started": "2026-09-19T10:04:41.124990164Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    }
+  },
+  "after": {
+    "sglang-qwen3-8-27b-native-qos": {
+      "id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+      "started": "2026-09-19T10:04:40.659380842Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    },
+    "phala-inference-guard-qwen3-8-27b-native-qos": {
+      "id": "1a9bae9fc56f316f7ce92fd84e2d88adc670726f4880e357762d7e30b9ef0fda",
+      "started": "2026-09-19T10:04:41.124990164Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    }
+  },
+  "input_sha256": "ff0a9c1af819dfe7a5b007462438baf3e947f4ee61cabbbb0a8ae3aed459362a",
+  "owner_report_sha256": "38b567f658bc18344a5b30b22d7693569b2060c1670da136a86f2f3480def57c",
+  "source_hashes": {
+    "python/sglang/srt/observability/req_time_stats.py": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad",
+    "test/registered/unit/observability/test_queue_time_retract.py": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9"
+  },
+  "scope": "Combined CPU candidate only; initial queue latency and latest requeue timing remain distinct, transported clock rebasing tested. No live source replacement."
+}

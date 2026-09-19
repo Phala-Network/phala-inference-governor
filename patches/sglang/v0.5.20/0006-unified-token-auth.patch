@@ -1,0 +1,471 @@
+diff --git a/python/sglang/srt/arg_groups/token_auth.py b/python/sglang/srt/arg_groups/token_auth.py
+new file mode 100644
+index 0000000..4c702b3
+--- /dev/null
++++ b/python/sglang/srt/arg_groups/token_auth.py
+@@ -0,0 +1,74 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Explicit environment auth and diagnostic-only secret redaction.
++
++Runtime records and IPC retain actual credentials. Never feed the diagnostic
++serializer back into a runtime configuration.
++"""
++
++from __future__ import annotations
++
++import os
++
++_AUTH_FIELDS = frozenset(("api_key", "admin_api_key", "ssl_keyfile_password"))
++_AUTH_FLAGS = frozenset("--" + name.replace("_", "-") for name in _AUTH_FIELDS)
++
++
++def handle_token_auth(server_args):
++    """Resolve both HTTP credentials from TOKEN only after explicit opt-in."""
++    mode = os.environ.get("PIG_AUTH_FROM_TOKEN")
++    if mode in (None, "0"):
++        return
++    if mode != "1":
++        raise ValueError("PIG_AUTH_FROM_TOKEN must be 0 or 1")
++
++    token = os.environ.get("TOKEN")
++    if not token or any(not 0x21 <= ord(char) <= 0x7E for char in token):
++        raise ValueError(
++            "PIG_AUTH_FROM_TOKEN requires a nonempty printable ASCII TOKEN without whitespace"
++        )
++
++    from sglang.srt.arg_groups.overrides import declare_resolution
++
++    # Even matching explicit keys introduce a second source and can leak via
++    # process argv. Raw None remains None after a declaration or pickle roundtrip.
++    if server_args.api_key is not None or server_args.admin_api_key is not None:
++        raise ValueError("Explicit API/admin keys cannot be combined with PIG_AUTH_FROM_TOKEN")
++    declare_resolution(
++        server_args, "handle_token_auth", api_key=token, admin_api_key=token
++    )
++
++
++def redact_auth_config(value):
++    """Copy a diagnostic container, removing auth fields at every nesting level."""
++    if isinstance(value, dict):
++        return {
++            key: ("[REDACTED]" if item is not None else None)
++            if key in _AUTH_FIELDS
++            else redact_auth_config(item)
++            for key, item in value.items()
++        }
++    if isinstance(value, list):
++        return [redact_auth_config(item) for item in value]
++    if isinstance(value, tuple):
++        return tuple(redact_auth_config(item) for item in value)
++    return value
++
++
++def redact_auth_argv(argv):
++    """Hide explicit credential flags in stored diagnostic launch commands."""
++    result = []
++    hide_next = False
++    for arg in argv:
++        if hide_next:
++            result.append("[REDACTED]")
++            hide_next = False
++        elif arg.startswith("--") and any(flag.startswith(arg) for flag in _AUTH_FLAGS):
++            result.append(arg)
++            hide_next = True
++        elif "=" in arg and arg.startswith("--") and any(
++            flag.startswith(arg.partition("=")[0]) for flag in _AUTH_FLAGS
++        ):
++            result.append(arg.partition("=")[0] + "=[REDACTED]")
++        else:
++            result.append(arg)
++    return result
+diff --git a/python/sglang/srt/arg_groups/fields/serving.py b/python/sglang/srt/arg_groups/fields/serving.py
+index 0fad5ce..c1e2c8e 100644
+--- a/python/sglang/srt/arg_groups/fields/serving.py
++++ b/python/sglang/srt/arg_groups/fields/serving.py
+@@ -154,11 +154,17 @@ class Serving(msgspec.Struct):
+     # -------------------------------------------------------------------------
+     api_key: A[
+         Optional[str],
+-        "Set API key of the server. It is also used in the OpenAI API compatible server.",
++        Arg(
++            help="Set API key of the server. PIG_AUTH_FROM_TOKEN=1 resolves this and the admin key from TOKEN.",
++            resolvable=True,
++        ),
+     ] = None
+     admin_api_key: A[
+         Optional[str],
+-        "Set admin API key for sensitive management endpoints (e.g. /clear_hicache_storage_backend). When set, admin endpoints require this key and do NOT accept --api-key.",
++        Arg(
++            help="Set admin API key for sensitive management endpoints (e.g. /clear_hicache_storage_backend). When set, admin endpoints require this key and do NOT accept --api-key.",
++            resolvable=True,
++        ),
+     ] = None
+     served_model_name: A[
+         Optional[str],
+diff --git a/python/sglang/srt/arg_groups/pipeline.py b/python/sglang/srt/arg_groups/pipeline.py
+index 7934edf..ab53eee 100644
+--- a/python/sglang/srt/arg_groups/pipeline.py
++++ b/python/sglang/srt/arg_groups/pipeline.py
+@@ -65,6 +65,10 @@ def run_resolution_pipeline(server_args: Any) -> None:
+ 
+     cfg = resolving_view(server_args)
+ 
++    from sglang.srt.arg_groups.token_auth import handle_token_auth
++
++    run_hook(handle_token_auth, server_args)
++
+     from sglang.srt.arg_groups.mega_moe_hook import handle_mega_moe
+ 
+     run_hook(handle_mega_moe, server_args)
+diff --git a/python/sglang/srt/arg_groups/resolution_hooks.py b/python/sglang/srt/arg_groups/resolution_hooks.py
+index b16064c..0534226 100644
+--- a/python/sglang/srt/arg_groups/resolution_hooks.py
++++ b/python/sglang/srt/arg_groups/resolution_hooks.py
+@@ -42,6 +42,7 @@ from typing import Any, Callable, Dict, FrozenSet, List
+ # because the name is all `run_hook` has to key on.
+ _OVERRIDABLE_HOOKS: FrozenSet[str] = frozenset(
+     {
++        "handle_token_auth",
+         "handle_mega_moe",
+         "handle_return_hidden_states_mode",
+         "handle_media_url_security",
+diff --git a/python/sglang/srt/server_args.py b/python/sglang/srt/server_args.py
+index 8e7e274..3fc12b0 100644
+--- a/python/sglang/srt/server_args.py
++++ b/python/sglang/srt/server_args.py
+@@ -293,7 +293,7 @@ class ServerArgs:
+ 
+     @property
+     def launch_command(self) -> str | None:
+-        """How this record was created, verbatim.
++        """How this record was created, with explicit credential flags redacted.
+ 
+         `resolved_dict` answers with what resolution decided; this answers with
+         what the operator asked for, which is a different question and the one
+@@ -324,6 +324,12 @@ class ServerArgs:
+             for field in record_fields(type(self))
+         }
+ 
++    def diagnostic_dict(self) -> dict[str, Any]:
++        """Resolved configuration for logs/readbacks, never runtime IPC."""
++        from sglang.srt.arg_groups.token_auth import redact_auth_config
++
++        return redact_auth_config(self.resolved_dict())
++
+     # ------------------------------------------------------------------
+     # CUDA graph configuration resolution
+     # ------------------------------------------------------------------
+@@ -733,7 +739,9 @@ def prepare_server_args(argv: list[str]) -> ServerArgs:
+     # Not a field: the record's fields are the configuration, and this is how
+     # the configuration was asked for. It rides along on the record so a
+     # subprocess copy can answer the same question the launcher can.
+-    server_args._launch_command = " ".join(argv)
++    from sglang.srt.arg_groups.token_auth import redact_auth_argv
++
++    server_args._launch_command = " ".join(redact_auth_argv(argv))
+     return server_args
+ 
+ 
+diff --git a/python/sglang/srt/entrypoints/engine.py b/python/sglang/srt/entrypoints/engine.py
+index f0563c0..f46bcc2 100644
+--- a/python/sglang/srt/entrypoints/engine.py
++++ b/python/sglang/srt/entrypoints/engine.py
+@@ -117,6 +117,7 @@ from sglang.srt.runtime_context import (
+     snapshot_context,
+ )
+ from sglang.srt.server_args import PortArgs, ServerArgs
++from sglang.srt.arg_groups.token_auth import redact_auth_config
+ from sglang.srt.utils import (
+     MultiprocessingSerializer,
+     SerializedTensorPayload,
+@@ -270,10 +271,10 @@ class Engine(EngineScoreMixin, EngineBase):
+             msgspec.Struct.__setattr__(
+                 server_args,
+                 "_launch_command",
+-                "Engine(" + ", ".join(f"{k}={v!r}" for k, v in kwargs.items()) + ")",
++                "Engine(" + ", ".join(f"{k}={v!r}" for k, v in redact_auth_config(kwargs).items()) + ")",
+             )
+         self.server_args = server_args
+-        logger.info(f"server_args={server_args.resolved_dict()}")
++        logger.info(f"server_args={server_args.diagnostic_dict()}")
+ 
+         # Rust Server is not supported with the offline Engine API
+         if envs.SGLANG_RUST_SERVER.get():
+@@ -1106,7 +1107,7 @@ class Engine(EngineScoreMixin, EngineBase):
+             # Allocate ports for inter-process communications
+             if port_args is None:
+                 port_args = PortArgs.init_new(server_args)
+-            logger.info(f"server_args={server_args.resolved_dict()}")
++            logger.info(f"server_args={server_args.diagnostic_dict()}")
+ 
+             # Start the engine info bootstrap server if per-rank info is needed.
+             engine_info_bootstrap_server = None
+@@ -1378,14 +1379,14 @@ class Engine(EngineScoreMixin, EngineBase):
+             self.tokenizer_manager.get_internal_state()
+         )
+         return msgspec_to_builtins(
+-            {
++            redact_auth_config({
+                 **self.tokenizer_manager.server_args.resolved_dict(),
+                 "launch_command": self.tokenizer_manager.server_args.launch_command,
+                 **self._scheduler_init_result.scheduler_infos[0],
+                 "startup_time": self.tokenizer_manager.startup_time,
+                 "internal_states": internal_states,
+                 "version": __version__,
+-            }
++            })
+         )
+ 
+     def get_model_info(self):
+diff --git a/python/sglang/srt/entrypoints/grpc_bridge.py b/python/sglang/srt/entrypoints/grpc_bridge.py
+index 8ab6f86..2d1128f 100644
+--- a/python/sglang/srt/entrypoints/grpc_bridge.py
++++ b/python/sglang/srt/entrypoints/grpc_bridge.py
+@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
+ from pydantic import ValidationError
+ 
+ from sglang.srt.arg_groups.overrides import resolving_view
++from sglang.srt.arg_groups.token_auth import redact_auth_config
+ from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
+ from sglang.srt.runtime_context import (
+     describe_kv_events_publisher,
+@@ -437,7 +438,7 @@ class RuntimeHandle:
+         result["kv_events"] = describe_kv_events_publisher(
+             self.tokenizer_manager.server_args
+         )
+-        return json.dumps(msgspec_to_builtins(result), default=str)
++        return json.dumps(msgspec_to_builtins(redact_auth_config(result)), default=str)
+ 
+     def health_check(self) -> bool:
+         from sglang.srt.managers.tokenizer_manager import ServerStatus
+diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
+index 549713c..6aac387 100644
+--- a/python/sglang/srt/entrypoints/http_server.py
++++ b/python/sglang/srt/entrypoints/http_server.py
+@@ -64,6 +64,7 @@ from fastapi.responses import ORJSONResponse, Response, StreamingResponse
+ from fastapi.routing import APIRoute
+ 
+ from sglang.srt.arg_groups.overrides import resolving_view
++from sglang.srt.arg_groups.token_auth import redact_auth_config
+ from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
+ from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
+ from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST, DisaggregationMode
+@@ -851,7 +852,7 @@ async def server_info():
+     )
+ 
+     return msgspec_to_builtins(
+-        {
++        redact_auth_config({
+             **server_args.resolved_dict(),
+             "launch_command": server_args.launch_command,
+             **_global_state.scheduler_info,
+@@ -865,7 +866,7 @@ async def server_info():
+             # `None` when publishing is disabled or misconfigured; see
+             # `runtime_context.describe_kv_events_publisher` for the contract.
+             "kv_events": describe_kv_events_publisher(server_args),
+-        }
++        })
+     )
+ 
+ 
+diff --git a/python/sglang/srt/managers/tokenizer_manager.py b/python/sglang/srt/managers/tokenizer_manager.py
+index f192b69..0130c5d 100644
+--- a/python/sglang/srt/managers/tokenizer_manager.py
++++ b/python/sglang/srt/managers/tokenizer_manager.py
+@@ -2216,7 +2216,11 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
+         part that cannot be reconstructed afterwards.
+         """
+         try:
+-            return self.resolved_config_dict(self.server_args.resolved_dict())
++            from sglang.srt.arg_groups.token_auth import redact_auth_config
++
++            return redact_auth_config(
++                self.resolved_config_dict(self.server_args.resolved_dict())
++            )
+         except Exception as e:
+             logger.error(f"Failed to snapshot the resolved config for the dump: {e!r}")
+             return None
+@@ -3248,7 +3252,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
+                     "config_updates": get_context().overrides_log(),
+                     "resolved_config": self._dump_config_snapshot(),
+                     "requests": data_to_dump,
+-                    "launch_command": " ".join(sys.argv),
++                    "launch_command": self.server_args.launch_command,
+                 }
+                 with open(filename, "wb") as f:
+                     try:
+diff --git a/test/registered/unit/utils/test_token_env_auth.py b/test/registered/unit/utils/test_token_env_auth.py
+new file mode 100644
+index 0000000..8d14c7c
+--- /dev/null
++++ b/test/registered/unit/utils/test_token_env_auth.py
+@@ -0,0 +1,169 @@
++"""TOKEN opt-in through official CLI; runtime/diagnostic separation, no GPU."""
++import asyncio
++import json
++import os
++import pickle
++import unittest
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
++
++from sglang.test.test_utils import maybe_stub_sgl_kernel
++
++maybe_stub_sgl_kernel()
++
++from sglang.srt.arg_groups.token_auth import redact_auth_argv, redact_auth_config
++from sglang.srt.runtime_context import get_context, get_serving, publish, reset_context
++from sglang.srt.server_args import ServerArgs, prepare_server_args
++from sglang.srt.utils.auth import AuthLevel, decide_request_auth
++
++TOKEN = "unit-test-token-only-7f9b"
++
++
++class TokenEnvironmentAuthTests(unittest.TestCase):
++    def setUp(self):
++        self.environment = patch.dict(os.environ, {"PIG_AUTH_FROM_TOKEN": "0", "TOKEN": TOKEN})
++        self.environment.start()
++        self.addCleanup(self.environment.stop)
++        self.addCleanup(reset_context)
++        reset_context()
++
++    def resolve(self, **fields):
++        args = ServerArgs(model_path="dummy", **fields)
++        args.resolve_once()
++        return args
++
++    def test_absent_and_disabled_opt_in_preserve_legacy_keys(self):
++        for mode in (None, "0"):
++            with self.subTest(mode=mode):
++                if mode is None:
++                    os.environ.pop("PIG_AUTH_FROM_TOKEN", None)
++                else:
++                    os.environ["PIG_AUTH_FROM_TOKEN"] = mode
++                args = self.resolve(api_key="old-api", admin_api_key="old-admin")
++                self.assertEqual(args.resolved_dict()["api_key"], "old-api")
++                self.assertEqual(args.resolved_dict()["admin_api_key"], "old-admin")
++
++    def test_official_cli_resolves_auth_and_preserves_runtime_ipc(self):
++        os.environ["PIG_AUTH_FROM_TOKEN"] = "1"
++        args = prepare_server_args(["--model-path", "dummy", "--disable-overlap-schedule"])
++        args.resolve_once()
++        self.assertIsNone(args.api_key)  # raw input is deliberately unchanged
++        self.assertIsNone(args.admin_api_key)
++        self.assertEqual(args.resolved_dict()["api_key"], TOKEN)
++        self.assertEqual(args.resolved_dict()["admin_api_key"], TOKEN)
++        self.assertNotIn(TOKEN, args.launch_command)
++        self.assertNotIn(TOKEN, json.dumps(args.diagnostic_dict()))
++        copied = pickle.loads(pickle.dumps(args))
++        os.environ.pop("TOKEN")
++        publish(copied, role="tokenizer")  # resolved child does not re-read env
++        self.assertEqual(get_serving().api_key, TOKEN)
++        self.assertEqual(get_serving().admin_api_key, TOKEN)
++        self.assertEqual(get_context().resolved_server_args_dict()["api_key"], TOKEN)
++
++    def test_both_auth_levels_require_unified_credential(self):
++        os.environ["PIG_AUTH_FROM_TOKEN"] = "1"
++        publish(self.resolve(), role="tokenizer")
++        for level in (AuthLevel.NORMAL, AuthLevel.ADMIN_OPTIONAL, AuthLevel.ADMIN_FORCE):
++            for credential, expected in ((None, False), ("Bearer wrong", False), ("Bearer " + TOKEN, True)):
++                with self.subTest(level=level, credential_present=credential is not None):
++                    result = decide_request_auth(
++                        method="POST", path="/generate", authorization_header=credential,
++                        api_key=get_serving().api_key, admin_api_key=get_serving().admin_api_key,
++                        auth_level=level,
++                    )
++                    self.assertEqual(result.allowed, expected)
++
++    def test_missing_and_invalid_token_fail_before_model_resolution(self):
++        os.environ["PIG_AUTH_FROM_TOKEN"] = "1"
++        for value in (None, "", " leading", "trailing ", "two words", "a\nb", "a\rb", "a\tb", "a\x7fb", "nonascii-\u00e9"):
++            with self.subTest(case=repr(value)):
++                if value is None:
++                    os.environ.pop("TOKEN", None)
++                else:
++                    os.environ["TOKEN"] = value
++                with self.assertRaisesRegex(ValueError, "requires a nonempty printable ASCII"):
++                    self.resolve()
++
++    def test_invalid_opt_in_fails_closed_without_echoing_value(self):
++        os.environ["PIG_AUTH_FROM_TOKEN"] = "invalid-sensitive-fixture"
++        with self.assertRaises(ValueError) as caught:
++            self.resolve()
++        self.assertNotIn(os.environ["PIG_AUTH_FROM_TOKEN"], str(caught.exception))
++
++    def test_all_explicit_keys_rejected_without_echoing_secret(self):
++        os.environ["PIG_AUTH_FROM_TOKEN"] = "1"
++        for fields in (
++            {"api_key": TOKEN}, {"admin_api_key": TOKEN},
++            {"api_key": TOKEN, "admin_api_key": TOKEN},
++            {"api_key": "conflict-value"}, {"admin_api_key": "conflict-value"},
++            {"api_key": ""},
++        ):
++            with self.assertRaises(ValueError) as caught:
++                self.resolve(**fields)
++            self.assertNotIn(TOKEN, str(caught.exception))
++            self.assertNotIn("conflict-value", str(caught.exception))
++
++    def test_explicit_cli_secrets_removed_from_launch_readback(self):
++        args = prepare_server_args([
++            "--model-path", "dummy", "--api-key", TOKEN,
++            "--admin-api-key=" + TOKEN,
++        ])
++        self.assertNotIn(TOKEN, args.launch_command)
++        self.assertEqual(args.resolved_dict()["api_key"], TOKEN)
++        self.assertEqual(redact_auth_argv(["--api-key=x", "--port", "30000"]), ["--api-key=[REDACTED]", "--port", "30000"])
++        abbreviated = prepare_server_args([
++            "--model-path", "dummy", "--api-k", TOKEN, "--admin-api-k=" + TOKEN,
++        ])
++        self.assertNotIn(TOKEN, abbreviated.launch_command)
++
++    def test_nested_readback_redaction_does_not_change_ipc_payload(self):
++        raw = {"api_key": TOKEN, "internal_states": [{"server_args": {"admin_api_key": TOKEN, "api_key": None}}]}
++        redacted = redact_auth_config(raw)
++        self.assertNotIn(TOKEN, json.dumps(redacted))
++        self.assertEqual(raw["api_key"], TOKEN)
++        self.assertEqual(raw["internal_states"][0]["server_args"]["admin_api_key"], TOKEN)
++        self.assertIsNone(redacted["internal_states"][0]["server_args"]["api_key"])
++
++    def manager(self):
++        os.environ["PIG_AUTH_FROM_TOKEN"] = "1"
++        args = self.resolve()
++        return SimpleNamespace(
++            server_args=args, startup_time=0,
++            get_internal_state=AsyncMock(return_value=[{"api_key": TOKEN, "nested": {"admin_api_key": TOKEN}}]),
++        )
++
++    def test_actual_http_server_info_redacts_nested_scheduler_state(self):
++        from sglang.srt.entrypoints import http_server
++        manager = self.manager()
++        state = SimpleNamespace(tokenizer_manager=manager, scheduler_info={})
++        with patch.object(http_server, "_global_state", state), patch.object(http_server, "describe_kv_events_publisher", return_value=None):
++            result = asyncio.run(http_server.server_info())
++        self.assertNotIn(TOKEN, json.dumps(result))
++        self.assertEqual(manager.server_args.resolved_dict()["api_key"], TOKEN)
++
++    def test_actual_engine_and_grpc_readbacks_redact(self):
++        from sglang.srt.entrypoints.engine import Engine
++        from sglang.srt.entrypoints import grpc_bridge
++        manager = self.manager()
++        loop = asyncio.new_event_loop()
++        try:
++            fake = SimpleNamespace(tokenizer_manager=manager, loop=loop,
++                _scheduler_init_result=SimpleNamespace(scheduler_infos=[{}]))
++            self.assertNotIn(TOKEN, json.dumps(Engine.get_server_info(fake)))
++        finally:
++            loop.close()
++        fake = SimpleNamespace(tokenizer_manager=manager, scheduler_info={})
++        with patch.object(grpc_bridge, "describe_kv_events_publisher", return_value=None):
++            self.assertNotIn(TOKEN, grpc_bridge.RuntimeHandle.get_server_info(fake))
++
++    def test_tokenizer_dump_redacts_without_changing_runtime_record(self):
++        from sglang.srt.managers.tokenizer_manager import TokenizerManager
++        manager = self.manager()
++        manager.resolved_config_dict = lambda base: {**base, "nested": {"admin_api_key": TOKEN}}
++        result = TokenizerManager._dump_config_snapshot(manager)
++        self.assertNotIn(TOKEN, json.dumps(result))
++        self.assertEqual(manager.server_args.resolved_dict()["admin_api_key"], TOKEN)
++
++
++if __name__ == "__main__":
++    unittest.main()

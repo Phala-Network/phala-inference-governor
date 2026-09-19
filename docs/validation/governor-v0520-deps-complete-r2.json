@@ -1,0 +1,28 @@
+{
+  "staged": true,
+  "versions": {
+    "sglang-kernel": "0.4.7",
+    "cython": "3.3.0",
+    "sgl-deep-gemm": "0.2.0",
+    "nvshmem4py-cu13": "0.3.1"
+  },
+  "added_wheels": [
+    {
+      "filename": "nvshmem4py_cu13-0.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_34_x86_64.whl",
+      "url": "https://files.pythonhosted.org/packages/3e/57/f02bf9dd6792e2e7853ceaef24f1fbc252cbe71da325cbd6d06f4807611a/nvshmem4py_cu13-0.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_34_x86_64.whl",
+      "sha256": "51d38cae4ee0544815150f40005c0e71ea44aef2ad926f3b6492341063c64e73",
+      "bytes": 3118281,
+      "tag_rank": 6
+    },
+    {
+      "filename": "cython-3.3.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "url": "https://files.pythonhosted.org/packages/6a/4e/6b1c5a4e6bbe1726104de007aa2fdf01a3e2e386b4ec93c7be5f5085d53f/cython-3.3.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "sha256": "428fafed98ea26927000a287b4dfc9ef07339f56656a5329a34eaa593f79a4f8",
+      "bytes": 3412225
+    }
+  ],
+  "missing_direct_requirements": [],
+  "missing_nvshmem_requirements": [],
+  "requirements_sha256": "6f74f498adbe995c9fa3196856127ece363e0f72269b8191a8c1cf3fab3344cb",
+  "scope": "isolated directories only; direct v0520 + nvshmem metadata constraints checked; no base/service mutation or GPU import/ABI claim"
+}

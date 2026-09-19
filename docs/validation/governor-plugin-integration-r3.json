@@ -1,0 +1,87 @@
+{
+  "passed": true,
+  "before": {
+    "identity": {
+      "lineage_schema": "pig.native-soft-attribution-lineage.v1",
+      "backend_id": "a8b9ccf60ae4ae9c53ba0b8b693ccfd192976d30d9965b7d41f6dc73b082b713",
+      "backend_started_at": "2026-09-18T12:38:56.80808088Z",
+      "backend_epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "adapter_id": "5784ec424188f4d0c69db59da3c4aabe6038eaf04005a2f7072b91880a47b21c",
+      "adapter_started_at": "2026-09-18T07:39:43.276948578Z",
+      "adapter_image": "sha256:e70a4425bb38f3ded450d5e95840d148018a72809e7eab64360d5c1d5feb6024",
+      "adapter_binary_sha256": "cf73daa4d0746222084164ab5edfe7b1b07d156886af9723d69eb2ac4bd0a8d1",
+      "prior_model_started_sha256": "38ecb88c25074cbb1c31b58ccad0646e412d08e48c462cd151b5490812c93029",
+      "historical_adapter_transition_sha256": "940f6626e9b4460e15f0ccba9888a76c51efd48c4002db6c7af499568ae6348b",
+      "adapter_unchanged": true
+    },
+    "counters": {
+      "accepted_total": 1056,
+      "scheduler_successful_completions": 1055,
+      "scheduler_successful_completed_tokens": 221481,
+      "epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "revision": 1,
+      "tps_reference": 35.0
+    }
+  },
+  "after": {
+    "identity": {
+      "lineage_schema": "pig.native-soft-attribution-lineage.v1",
+      "backend_id": "a8b9ccf60ae4ae9c53ba0b8b693ccfd192976d30d9965b7d41f6dc73b082b713",
+      "backend_started_at": "2026-09-18T12:38:56.80808088Z",
+      "backend_epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "adapter_id": "5784ec424188f4d0c69db59da3c4aabe6038eaf04005a2f7072b91880a47b21c",
+      "adapter_started_at": "2026-09-18T07:39:43.276948578Z",
+      "adapter_image": "sha256:e70a4425bb38f3ded450d5e95840d148018a72809e7eab64360d5c1d5feb6024",
+      "adapter_binary_sha256": "cf73daa4d0746222084164ab5edfe7b1b07d156886af9723d69eb2ac4bd0a8d1",
+      "prior_model_started_sha256": "38ecb88c25074cbb1c31b58ccad0646e412d08e48c462cd151b5490812c93029",
+      "historical_adapter_transition_sha256": "940f6626e9b4460e15f0ccba9888a76c51efd48c4002db6c7af499568ae6348b",
+      "adapter_unchanged": true
+    },
+    "counters": {
+      "accepted_total": 1056,
+      "scheduler_successful_completions": 1055,
+      "scheduler_successful_completed_tokens": 221481,
+      "epoch": "c5a22a2a266f4d4d8da10e96cea9f46a",
+      "revision": 1,
+      "tps_reference": 35.0
+    }
+  },
+  "rust_build": [
+    0,
+    0
+  ],
+  "tests": {
+    "id": "aee7fb9c37ee6cfabbbaff93d7877528d627430232ac95c5d38218981693ee29",
+    "exit": 0,
+    "oom_killed": false,
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-plugin-integration-r3/evidence/tests.log",
+    "log_sha256": "29eeb5a7ebe87a0a72df03589ba5a0f339b040dd1f0c7764b2812a2c1bd35f2a"
+  },
+  "input_sha256": "92332b18e4a28e1fab1d982884f4cca0881e71899cf8fae523d427b6a8e1d5bf",
+  "source_hashes": {
+    "test/registered/unit/test_request_disconnect_cleanup.py": "02d78350fd9c373d7f88040d5968fa9fe1b82c03d422a0826eb11e55b32a2843",
+    "test/registered/unit/sampling/test_identity_grammar_mask.py": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e",
+    "test/registered/unit/model_executor/test_draft_extend_device_metadata.py": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc",
+    "test/registered/unit/model_executor/test_prefill_metadata_handoff.py": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0",
+    "test/registered/unit/managers/test_prefill_adder.py": "707766eb42d3779f04004b235910f4d027e9cfb41d90d13a9f8371d1fc49ecc4",
+    "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py": "bfdc9d36a234d4e713965f6f3d879751510d676c1ac7b6e7a18d2ed7a7229491",
+    "python/sglang/srt/managers/tp_worker.py": "3a02f20dc90f4e96cc28128e187062bf591bdafe2641b2430c8acf3609ae51a9",
+    "python/sglang/srt/managers/tokenizer_manager.py": "b7fac1931ab0296a80a4130b2333d841e595825a013e40e84541b134edc34a99",
+    "python/sglang/srt/managers/scheduler.py": "53c065eef16b7d470db227ff39a22d7c112998f501cdb3a0b504b93db07a8cb6",
+    "python/sglang/srt/managers/utils.py": "1e7c5c3f05f07df19593d50f7b36646290665082b88d70ceb8fb432302de5e8f",
+    "python/sglang/srt/managers/io_struct.py": "df48d31432b8f6efd286626d8e3aff751e9a0e91f3189af95e869d8a47b8e76f",
+    "python/sglang/srt/model_executor/forward_batch_info.py": "69cfe664d9e1def885b48012c1306453954b8dc218b8f0acd60d3acf4fe52a2e",
+    "python/sglang/srt/entrypoints/request_disconnect.py": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae",
+    "python/sglang/srt/entrypoints/http_server.py": "be8b15b4f91516b83487a7fb0dd412e09b1b8ac67db6a1ba16b4d8f718dcd645",
+    "python/sglang/srt/speculative/eagle_worker_common.py": "57850102d142d738c06cee2f9ad174d4c80a97e8ff240b5f336f9a3b5bf5de81",
+    "python/sglang/srt/speculative/eagle_worker_v2.py": "db3d2c983bec080a0c969514597904ed40cce35cfb4ea30a91ddeec0bc39bb33",
+    "python/sglang/srt/speculative/spec_utils.py": "e6cb161e6ae4722686edc055deebd827654769eab11200c57353008b14faecc3",
+    "python/sglang/srt/sampling/sampling_batch_info.py": "3433da0bb9711629d9b9230b0ca03133fda7ecaaffe33472ba413081ecd8b57e",
+    "python/sglang/srt/constrained/reasoner_grammar_backend.py": "3a504447ee0c439e28a690110f325ab15748155c252d0c58b3f8177becfa163a",
+    "python/sglang/srt/entrypoints/openai/serving_chat.py": "5f5d5e9a8e6631e14fc4684ef4d559f4ffdcd5a7dd2e182079a57442a68575ee",
+    "python/sglang/srt/entrypoints/openai/serving_base.py": "83b3ba1dee8359f257cbb397d95c43d075f7d56f9e0c50ea398e3e6cc522e32a",
+    "python/sglang/srt/entrypoints/openai/serving_responses.py": "de41881ce5f9a88457814dd5eabf620c0e4de056cfb8a578ecf3ae7a492c828a",
+    "python/sglang/srt/entrypoints/openai/serving_completions.py": "1aa67fe4ce2dc1e47ba51ae2d13ebaca514c8e46aee62ecc288dd8d2d9f73400"
+  },
+  "scope": "CPU real SGLang imports/methods, Rust/FFI, HTTP endpoint and preserved serving fixes; no live inference"
+}

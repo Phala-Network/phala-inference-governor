@@ -1,0 +1,51 @@
+{
+  "passed": true,
+  "test_count": 28,
+  "runner": {
+    "id": "11d9c61d8c667bb5984d680b84e2c3c04e67188378b489697449f637c1add48e",
+    "exit": 0,
+    "oom_killed": false,
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-owner-observation-r2/evidence/tests.log",
+    "log_sha256": "12479ddb2129eafa9ca787e9c5b2f8638a8c209023012128382001e523895ca2"
+  },
+  "before": {
+    "sglang-qwen3-8-27b-native-qos": {
+      "id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+      "started": "2026-09-19T10:04:40.659380842Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    },
+    "phala-inference-guard-qwen3-8-27b-native-qos": {
+      "id": "1a9bae9fc56f316f7ce92fd84e2d88adc670726f4880e357762d7e30b9ef0fda",
+      "started": "2026-09-19T10:04:41.124990164Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    }
+  },
+  "after": {
+    "sglang-qwen3-8-27b-native-qos": {
+      "id": "48a957fcd3ea5fc8a27df869d2a9a54d8c9541153dd5014b7e440e4da2fc851f",
+      "started": "2026-09-19T10:04:40.659380842Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    },
+    "phala-inference-guard-qwen3-8-27b-native-qos": {
+      "id": "1a9bae9fc56f316f7ce92fd84e2d88adc670726f4880e357762d7e30b9ef0fda",
+      "started": "2026-09-19T10:04:41.124990164Z",
+      "epoch": "1db6eebcf06a46598b7e1c39f25a60be",
+      "revision": 3,
+      "reference": 35.0
+    }
+  },
+  "input_sha256": "7e8cdcd92cbef269268ed82d2a5be99073788007f05259b316d92769b966507a",
+  "source_hashes": {
+    "python/sglang/srt/entrypoints/http_server.py": "e6e53aa70413271b15d65c22176056face97ebc575b2358c384669f99558b04d",
+    "python/sglang/srt/managers/tokenizer_manager.py": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f",
+    "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py": "895fbfa19aa01739fa1bbdfd6b4d89347f09dfe69cbb87d621066159f2ae8c82"
+  },
+  "log_sha256": "827e9ef3275603d9a4a0de3c8b02e23914757624aa856b3936b9d57111dcc21c",
+  "scope": "CPU native cleanup and server_info count/unavailable serialization. Live installed wheel unchanged; no live RID/SHM acceptance claim."
+}

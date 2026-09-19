@@ -1,0 +1,373 @@
+{
+  "scope": "Physical lines including comments/blanks, LF normalization; model delta limited to explicitly validated changed-file union, not an unrestricted whole-tree audit. Test declarations are not execution counts. Staged govdev2 has not been asserted live.",
+  "upstream": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+  "source_package_sha256": "548c3f6d04510960c5ab50d342d86740104eb94c7aa5301663ac252901ec2c71",
+  "governor_rust": {
+    "runtime_lines": 269,
+    "test_lines": 116,
+    "test_declarations": 7,
+    "external_dependencies": 0,
+    "source_matches_verified_r5": true
+  },
+  "governor_python": {
+    "runtime_files": 6,
+    "runtime_lines": 335,
+    "test_files": 7,
+    "test_lines": 735,
+    "test_declarations": 34,
+    "source_matches_current_mounted_plugin": true
+  },
+  "generic_sglang_delta": {
+    "runtime": {
+      "added": 552,
+      "deleted": 133,
+      "files": 20
+    },
+    "tests": {
+      "added": 1284,
+      "deleted": 0
+    },
+    "manifest_sha256": "a3938c4da72727fa6b0bf3ef2ad2e1b2037db22d536636a3b91e36430b661000"
+  },
+  "model_candidate_delta": {
+    "runtime": {
+      "files": 29,
+      "added": 1731,
+      "deleted": 245
+    },
+    "tests": {
+      "files": 21,
+      "added": 3385,
+      "deleted": 10
+    },
+    "rows": [
+      {
+        "path": "python/sglang/srt/constrained/grammar_manager.py",
+        "added": 21,
+        "deleted": 5,
+        "sha256": "fbf74728c2ecff3a9bfccdd1e5ca2ecb9c3f7b983a3e5009654561d419019ad8"
+      },
+      {
+        "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+        "added": 28,
+        "deleted": 1,
+        "sha256": "513190d38ad91b86fbbc29b86b70a26f4f6ecac2278ad5b9c53bd5ac4fd99170"
+      },
+      {
+        "path": "python/sglang/srt/constrained/xgrammar_backend.py",
+        "added": 11,
+        "deleted": 0,
+        "sha256": "881f337809959cf9800d91b4f42f6f33fd87fe081800e1ca010716f89fd2886b"
+      },
+      {
+        "path": "python/sglang/srt/constrained/xgrammar_schema.py",
+        "added": 56,
+        "deleted": 0,
+        "sha256": "e90fc1b03dcd476a84b22dbbce58394fcc3ce202e746e763fb938f73e8f990a0"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/http_server.py",
+        "added": 19,
+        "deleted": 0,
+        "sha256": "e6e53aa70413271b15d65c22176056face97ebc575b2358c384669f99558b04d"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/openai/protocol.py",
+        "added": 105,
+        "deleted": 16,
+        "sha256": "1553b9b77c8923b8e9c1c424411120e4e220df2e30a8cc351d104e77e6f9b980"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
+        "added": 79,
+        "deleted": 0,
+        "sha256": "a50643d3aaa6f56a5a7879f29f5b55178619f313bd22ddebe6ac60b2d4fe87fb"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+        "added": 445,
+        "deleted": 83,
+        "sha256": "35685590b92b560db3b2d8d7c2fd177d6ed205b4284511e6fa6a4ecce395b3ce"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/openai/serving_completions.py",
+        "added": 9,
+        "deleted": 22,
+        "sha256": "1f755b3d2318de78b7b14b14697fd162e6371d6a630bb3ed09693fadccf0ed97"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+        "added": 73,
+        "deleted": 49,
+        "sha256": "bf29d460ce0310c17207db8292073ff77ba9e635bd1dc0fbaed07ba0d528ca5e"
+      },
+      {
+        "path": "python/sglang/srt/entrypoints/request_disconnect.py",
+        "added": 51,
+        "deleted": 0,
+        "sha256": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae"
+      },
+      {
+        "path": "python/sglang/srt/function_call/qwen3_coder_detector.py",
+        "added": 93,
+        "deleted": 6,
+        "sha256": "f3b91b4220c40aa7ba6dddede19fefaa6af434be222f2a6fba831ab226758374"
+      },
+      {
+        "path": "python/sglang/srt/function_call/utils.py",
+        "added": 301,
+        "deleted": 0,
+        "sha256": "f2cec18d2bcd6ccd4c287acfea448318ce68edb4303d2513b5f75925a3a93d42"
+      },
+      {
+        "path": "python/sglang/srt/managers/communicator.py",
+        "added": 21,
+        "deleted": 8,
+        "sha256": "485569fbf54ba0c104855b7884b4387bc8639c072b8cddfa40c4ea09de3b06fd"
+      },
+      {
+        "path": "python/sglang/srt/managers/io_struct.py",
+        "added": 9,
+        "deleted": 5,
+        "sha256": "a29742a213878a2118b3ca2ca94e6e8567ff9c01d9efd071ee9db9be9d5d8eb2"
+      },
+      {
+        "path": "python/sglang/srt/managers/scheduler.py",
+        "added": 37,
+        "deleted": 4,
+        "sha256": "2e1e9a9cdbb92c137e07b195e0e933ee0c54dc4f42c8892e65ebb6507fe49e87"
+      },
+      {
+        "path": "python/sglang/srt/managers/tokenizer_control_mixin.py",
+        "added": 1,
+        "deleted": 0,
+        "sha256": "9a59dafbd7ecfbb4a5086eab3b25d510165023d4687c6ddbc983818322d45aed"
+      },
+      {
+        "path": "python/sglang/srt/managers/tokenizer_manager.py",
+        "added": 87,
+        "deleted": 21,
+        "sha256": "4c640b397d0c9718343fd5e9c0af59d92a69fb2d687e112c1770b34a49f0b76f"
+      },
+      {
+        "path": "python/sglang/srt/managers/tp_worker.py",
+        "added": 38,
+        "deleted": 0,
+        "sha256": "12ce75713498922e37b750acd5490631c54716dae0846cf7e5c7c77650f5e630"
+      },
+      {
+        "path": "python/sglang/srt/managers/utils.py",
+        "added": 6,
+        "deleted": 1,
+        "sha256": "180c036f63fb7871c2b059fa07b3f965f292f42ba55baff72d5b6aed40d2f3c2"
+      },
+      {
+        "path": "python/sglang/srt/model_executor/forward_batch_info.py",
+        "added": 33,
+        "deleted": 8,
+        "sha256": "6013b87aa2f009a92c49a5f026e27545751a6f617c9f129abd32501be05d8355"
+      },
+      {
+        "path": "python/sglang/srt/observability/req_time_stats.py",
+        "added": 18,
+        "deleted": 1,
+        "sha256": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad"
+      },
+      {
+        "path": "python/sglang/srt/sampling/sampling_batch_info.py",
+        "added": 16,
+        "deleted": 2,
+        "sha256": "549f951a90b626c0819f809beffa1cc9e7b7e28c75ccd8401615af68ed1c2c15"
+      },
+      {
+        "path": "python/sglang/srt/speculative/eagle_worker_common.py",
+        "added": 25,
+        "deleted": 0,
+        "sha256": "890577356ce849ad01d8844815d62a3043171e8878e2fe0978d71e1bbf330b8f"
+      },
+      {
+        "path": "python/sglang/srt/speculative/eagle_worker_v2.py",
+        "added": 45,
+        "deleted": 2,
+        "sha256": "4307a6cbe8cf283a1e3bf1934d7bb0c6dccf89f5da57433383d60572849283c1"
+      },
+      {
+        "path": "python/sglang/srt/speculative/spec_utils.py",
+        "added": 11,
+        "deleted": 0,
+        "sha256": "8b0e38bc9e0dd9d44658e0e4aae77c5acabf47baa7be3379ffe9ade72567ca0e"
+      },
+      {
+        "path": "python/sglang/srt/utils/common.py",
+        "added": 8,
+        "deleted": 2,
+        "sha256": "c903a2658512f9f3ee11df6aa8f85018d41095c3fffb28ee5490f72cc36357a5"
+      },
+      {
+        "path": "python/sglang/srt/utils/cudacore_pyspy_dump_utils.py",
+        "added": 17,
+        "deleted": 1,
+        "sha256": "a6e2e8fd16bb8b139fc931e74ec164975f029593c377e9c96edec4be23586804"
+      },
+      {
+        "path": "python/sglang/srt/utils/watchdog.py",
+        "added": 68,
+        "deleted": 8,
+        "sha256": "50c0971b20ae0144f7a6bca99c971a019fef855af7fdb700002021ac4ed1f23c"
+      },
+      {
+        "path": "test/registered/unit/constrained/test_grammar_manager.py",
+        "added": 21,
+        "deleted": 3,
+        "sha256": "08aa95ee7af7f97445bc91aab0472007c7fbcef000a2818ae169346f0e814780"
+      },
+      {
+        "path": "test/registered/unit/constrained/test_reasoner_grammar_backend.py",
+        "added": 61,
+        "deleted": 0,
+        "sha256": "4db5d7461685e29ac3c1df03d43065a6e31b9e57e4e45f4e19638b1f075587f1"
+      },
+      {
+        "path": "test/registered/unit/constrained/test_xgrammar_unsupported_schema.py",
+        "added": 162,
+        "deleted": 0,
+        "sha256": "68158cc5d00f397635c127eae5ea202ff6eca4da453b7a80e6ca05abfcb4dfc8"
+      },
+      {
+        "path": "test/registered/unit/entrypoints/openai/test_protocol.py",
+        "added": 110,
+        "deleted": 0,
+        "sha256": "57c6d0815b32813df88857c58e0db28d9da0447254c7127c1aec9457c054d7e2"
+      },
+      {
+        "path": "test/registered/unit/entrypoints/openai/test_serving_chat.py",
+        "added": 734,
+        "deleted": 3,
+        "sha256": "b7fb3b72fe11e8898ceab6a3336cef5997768baad2e512c20bfe38e3047464c0"
+      },
+      {
+        "path": "test/registered/unit/function_call/test_allowed_tools_choice.py",
+        "added": 145,
+        "deleted": 0,
+        "sha256": "1481c3d2ee10e93e6ce118440a093d34a129fb0d5f24de2cb4d0f7d48ec7324b"
+      },
+      {
+        "path": "test/registered/unit/function_call/test_normalize_json_schema_types.py",
+        "added": 42,
+        "deleted": 0,
+        "sha256": "b3d0c4c47db11e7991bf58b4d50866e8583af049d51cbe252355ada61a7546e6"
+      },
+      {
+        "path": "test/registered/unit/function_call/test_qwen3_coder_parallel_structural_tag.py",
+        "added": 84,
+        "deleted": 0,
+        "sha256": "e459f426f3ad92cfc92b162c2f752b0b2bae7426cf56c8fa955751b074fbbfb1"
+      },
+      {
+        "path": "test/registered/unit/function_call/test_qwen3_coder_schema_coercion.py",
+        "added": 207,
+        "deleted": 0,
+        "sha256": "0e23d85491c22eb48513b37b74e175f970ebdd6d7c5843931840db1934b18a92"
+      },
+      {
+        "path": "test/registered/unit/function_call/test_qwen_xml_empty_required_schema.py",
+        "added": 173,
+        "deleted": 0,
+        "sha256": "ccfb9b05296efe2686d820323a57be8fbf1c229d5cfa97075935f7f0a03c7ea3"
+      },
+      {
+        "path": "test/registered/unit/managers/test_io_struct.py",
+        "added": 5,
+        "deleted": 0,
+        "sha256": "1a98e218414402bc59c043ae825e8334b31f66e40ba03c9368a03c65ede6aab8"
+      },
+      {
+        "path": "test/registered/unit/managers/test_tokenizer_manager_pre_mm_length.py",
+        "added": 124,
+        "deleted": 0,
+        "sha256": "f350de97766790856d1dddf67cac9e61a29667253efdb19aff263107018efb3b"
+      },
+      {
+        "path": "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py",
+        "added": 53,
+        "deleted": 0,
+        "sha256": "895fbfa19aa01739fa1bbdfd6b4d89347f09dfe69cbb87d621066159f2ae8c82"
+      },
+      {
+        "path": "test/registered/unit/model_executor/test_draft_extend_device_metadata.py",
+        "added": 283,
+        "deleted": 0,
+        "sha256": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc"
+      },
+      {
+        "path": "test/registered/unit/model_executor/test_prefill_metadata_handoff.py",
+        "added": 316,
+        "deleted": 0,
+        "sha256": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0"
+      },
+      {
+        "path": "test/registered/unit/multimodal/test_base_processor_bad_input.py",
+        "added": 79,
+        "deleted": 4,
+        "sha256": "1d728f978e7a2a1fbbee5ae6c46347ae0b26b61b789b24fc895f29e80ba60085"
+      },
+      {
+        "path": "test/registered/unit/observability/test_queue_time_retract.py",
+        "added": 131,
+        "deleted": 0,
+        "sha256": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9"
+      },
+      {
+        "path": "test/registered/unit/sampling/test_identity_grammar_mask.py",
+        "added": 193,
+        "deleted": 0,
+        "sha256": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e"
+      },
+      {
+        "path": "test/registered/unit/test_request_disconnect_cleanup.py",
+        "added": 308,
+        "deleted": 0,
+        "sha256": "727a5754be174300a0d435132d141cf31a305d8b3a10afbad2b000784293385e"
+      },
+      {
+        "path": "test/registered/unit/test_watchdog_fail_hard.py",
+        "added": 90,
+        "deleted": 0,
+        "sha256": "ec56ef057bfdda48476ea6ff7066a3922ef6ce90cecf4fc32d7e91218e4b460d"
+      },
+      {
+        "path": "test/registered/unit/utils/test_watchdog_diagnostics_and_reap.py",
+        "added": 64,
+        "deleted": 0,
+        "sha256": "5124d3c51e38b50e8984b56aa2d8d3e5fa50db64988bf9e5e989d04192607d0b"
+      }
+    ],
+    "validation_reports": {
+      "governor-v0520-candidate-r1.json": "e58492ea7e4ee8919419f00fa5cab31dfd7c438ea77e357a8c47b6f1362f9652",
+      "qwen-v0520-model-r1.json": "81d3bd74013ea119e8b1ee380f8295573e459ba3ee5b8c6a14484614526c2c02",
+      "qwen-v0520-remaining-r2.json": "74d59d0de50635a5b1ceff297f29d2196e12c070e08a7252f66e25c697946630",
+      "governor-owner-observation-r2.json": "38b567f658bc18344a5b30b22d7693569b2060c1670da136a86f2f3480def57c",
+      "governor-queue-telemetry-r1.json": "363236b867fca9c238280a1f7949b139eb40ea4b806b991d3dbfa682cf46938c"
+    }
+  },
+  "package_file_hashes": {
+    "pyproject.toml": "ef97b008f9f95f31d58bab53e8de39ff3f8df1aad63e82c62ef14b6716a60c84",
+    "tests/test_scheduler.py": "5f7a2bda15ed5f15428ce2b73b9df55c619c9e54e31ac99cd58eb8061c26e684",
+    "tests/test_control_correlation.py": "1c34f1363d7d0ffc5c526e070b11608127fd4e32c3e9c8b0a2810503a8cabe22",
+    "tests/test_http_routing.py": "74b7b7b2be72178e0f245f46970380e131bcf8ecab2c8296f2030e5f8a50cab1",
+    "tests/test_ffi.py": "0ab789f7b29676a4b1b89c8db60cc2c6a2065e4502d8828810bf989f847e8c49",
+    "tests/test_sglang.py": "555266d3812484f8ef24015b9207d4f9fad822a8a1110ca4d92fd8df31db258d",
+    "tests/test_native_scheduler.py": "46cae1563708f428e56dd73838bc716bdbbf6b9e35bbf9a18122bec3b416f20d",
+    "tests/test_http.py": "d019c9421f2d3723f11ef09471abcd3b4591fac2b19e8adc45d73a17660c9ccf",
+    "rust/Cargo.lock": "8e499ed9f9543d8faf32dbfd6eec6e677105de20fd44cfcd0df9413f1c72a518",
+    "rust/Cargo.toml": "fc41aa7e8a84c47567f0565aad7d067060140d345f3fee9b9d97127464809c6e",
+    "rust/src/lib.rs": "53c2ecfbccb9a57ce0945d22014844a27a8a8020bdecef27cacc6f9692259cb0",
+    "rust/include/pig_governor.h": "defa7aa51c071d1825273b747c5b07dd825fd0b9563b1e06dae2bab7da07bb7f",
+    "python/pig_governor/__init__.py": "59f80138a82d418c111ef072c2477b52c1cb0c4293384aba9635088d0313b3da",
+    "python/pig_governor/sglang.py": "8032400a49f0a2014a645d1ad62e43bc8aa9693e18f66ed076b418fb5f363506",
+    "python/pig_governor/http.py": "8671bce89f60da08894f06ae5bff939aee9e35863b78f968291c4adf00cf8575",
+    "python/pig_governor/scheduler.py": "d9c23b8d876f0d9b6e943bb4ca700b4b787a3f8ec2216abd3622f6655e005511",
+    "python/pig_governor/admin.py": "8653d45120c70db713e4fae2c2951a8f64248493a5ac6dc435d8421dffdf2656",
+    "python/pig_governor/core.py": "ff25544ad4342746b95588eef8c91407f837e9c467f5c6b9e55a20c7ea56cde4"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "installed": true,
+  "runner": {
+    "id": "347d4e724028c8c477c9e2012f6fc5a5681bbba2b3b4ad0be274ced837fcd98b",
+    "exit": 0,
+    "oom_killed": false,
+    "log": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-v0520-native-import-r1/imports.log",
+    "log_sha256": "2bfe914890cd6722dc95580a737fe650845d3aa2eca38e4b5ea2ac9b6cee9dad"
+  },
+  "probe": {
+    "cuda_available": false,
+    "torch": "2.13.0+cu130",
+    "libraries": [
+      {
+        "package": "sglang-kernel",
+        "version": "0.4.7",
+        "imported": false,
+        "error_type": "ImportError",
+        "error": "\n[sgl_kernel] CRITICAL: Could not load any common_ops library!\n\nAttempted locations:\n1. Architecture-specific pattern: /results/site/sgl_kernel/sm100/common_ops.* - found files: ['/results/site/sgl_kernel/sm100/common_ops.abi3.so']\n2. Fallback pattern: /results/site/sgl_kernel/common_ops.* - found files: []\n3. Standard Python import: common_ops - failed\n\nGPU Info:\n- Compute capability: None\n- Expected variant: CPU/No GPU detected (using precise math)\n- CUDA version: 13.0\n\nPlease ensure sgl_kernel is properly installed with:\npip install --upgrade sglang-kernel\n\nError details from previous import attempts:\n- ImportError: libcuda.so.1: cannot open shared object file: No such file or directory\n- ModuleNotFoundError: No module named 'common_ops'\n",
+        "traceback": "Traceback (most recent call last):\n  File \"/results/probe.py\", line 8, in <module>\n    m=importlib.import_module(module)\n      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/importlib/__init__.py\", line 90, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 995, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"/results/site/sgl_kernel/__init__.py\", line 19, in <module>\n    common_ops = _load_architecture_specific_ops()\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/results/site/sgl_kernel/load_utils.py\", line 192, in _load_architecture_specific_ops\n    raise ImportError(error_msg)\nImportError: \n[sgl_kernel] CRITICAL: Could not load any common_ops library!\n\nAttempted locations:\n1. Architecture-specific pattern: /results/site/sgl_kernel/sm100/common_ops.* - found files: ['/results/site/sgl_kernel/sm100/common_ops.abi3.so']\n2. Fallback pattern: /results/site/sgl_kernel/common_ops.* - found files: []\n3. Standard Python import: common_ops - failed\n\nGPU Info:\n- Compute capability: None\n- Expected variant: CPU/No GPU detected (using precise math)\n- CUDA version: 13.0\n\nPlease ensure sgl_kernel is properly installed with:\npip install --upgrade sglang-kernel\n\nError details from previous import attempts:\n- ImportError: libcuda.so.1: cannot open shared object file: No such file or directory\n- ModuleNotFoundError: No module named 'common_ops'\n\n"
+      },
+      {
+        "package": "sgl-deep-gemm",
+        "version": "0.2.0",
+        "module_file": "/results/site/deep_gemm/__init__.py",
+        "imported": true
+      }
+    ]
+  },
+  "wheel_inputs": [
+    {
+      "name": "sglang-kernel",
+      "version": "0.4.7",
+      "file": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-v0520-native-wheels-r1/sglang_kernel-0.4.7-cp310-abi3-manylinux2014_x86_64.whl",
+      "sha256": "666f39de214a1558c5a98f43e6562e1032d8d08823b61f6a307830882f3241ce",
+      "bytes": 373107099
+    },
+    {
+      "name": "sgl-deep-gemm",
+      "version": "0.2.0",
+      "file": "/var/volatile/dstack/persistent/pig-sglang-native-qos-20260915/governor-v0520-native-wheels-r1/sgl_deep_gemm-0.2.0-py3-none-manylinux2014_x86_64.whl",
+      "sha256": "f208c333fca6686b482abc1e2dbb1960cd73be92f632829dc46fd6f7e9b9fb4d",
+      "bytes": 5419649
+    }
+  ],
+  "scope": "new wheel versions in isolated target directory, GPU hidden, no production runtime mutation or GPU acceptance"
+}

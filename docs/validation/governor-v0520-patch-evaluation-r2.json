@@ -1,0 +1,224 @@
+{
+  "release": "v0.5.20",
+  "commit": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+  "development_base": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+  "patch_sha256": "79a4d9dd8970c755099060c81463ab82fb16b9a7cf868fa3b97bca2ac0761103",
+  "input_sha256": "095328a97f1724ca615f472bf368f8b682b1d39853bce69e22c89de32625d6ea",
+  "raw_whole": {
+    "exit": 1,
+    "output": "error: patch failed: python/sglang/srt/constrained/reasoner_grammar_backend.py:81\nerror: python/sglang/srt/constrained/reasoner_grammar_backend.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/http_server.py:808\nerror: python/sglang/srt/entrypoints/http_server.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_base.py:4\nerror: python/sglang/srt/entrypoints/openai/serving_base.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_chat.py:1897\nerror: python/sglang/srt/entrypoints/openai/serving_chat.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_completions.py:201\nerror: python/sglang/srt/entrypoints/openai/serving_completions.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_responses.py:8\nerror: python/sglang/srt/entrypoints/openai/serving_responses.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/communicator.py:4\nerror: python/sglang/srt/managers/communicator.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/io_struct.py:2085\nerror: python/sglang/srt/managers/io_struct.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/scheduler.py:446\nerror: python/sglang/srt/managers/scheduler.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/tokenizer_control_mixin.py:167\nerror: python/sglang/srt/managers/tokenizer_control_mixin.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/tokenizer_manager.py:29\nerror: python/sglang/srt/managers/tokenizer_manager.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/tp_worker.py:46\nerror: python/sglang/srt/managers/tp_worker.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/utils.py:4\nerror: python/sglang/srt/managers/utils.py: patch does not apply\nerror: patch failed: python/sglang/srt/model_executor/forward_batch_info.py:727\nerror: python/sglang/srt/model_executor/forward_batch_info.py: patch does not apply\nerror: patch failed: python/sglang/srt/sampling/sampling_batch_info.py:243\nerror: python/sglang/srt/sampling/sampling_batch_info.py: patch does not apply\nerror: patch failed: python/sglang/srt/speculative/eagle_worker_common.py:8\nerror: python/sglang/srt/speculative/eagle_worker_common.py: patch does not apply\nerror: patch failed: python/sglang/srt/speculative/eagle_worker_v2.py:2\nerror: python/sglang/srt/speculative/eagle_worker_v2.py: patch does not apply\nerror: patch failed: python/sglang/srt/speculative/spec_utils.py:632\nerror: python/sglang/srt/speculative/spec_utils.py: patch does not apply\n"
+  },
+  "normalized_crlf_files": [
+    "test/registered/unit/managers/test_prefill_adder.py",
+    "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py",
+    "python/sglang/srt/managers/communicator.py",
+    "python/sglang/srt/managers/tokenizer_control_mixin.py",
+    "python/sglang/srt/managers/utils.py",
+    "python/sglang/srt/managers/io_struct.py",
+    "python/sglang/srt/managers/scheduler.py",
+    "python/sglang/srt/managers/tokenizer_manager.py",
+    "python/sglang/srt/managers/tp_worker.py",
+    "python/sglang/srt/model_executor/forward_batch_info.py",
+    "python/sglang/srt/entrypoints/http_server.py",
+    "python/sglang/srt/sampling/sampling_batch_info.py",
+    "python/sglang/srt/speculative/spec_utils.py",
+    "python/sglang/srt/speculative/eagle_worker_common.py",
+    "python/sglang/srt/speculative/eagle_worker_v2.py",
+    "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+    "python/sglang/srt/entrypoints/openai/serving_chat.py",
+    "python/sglang/srt/entrypoints/openai/serving_base.py",
+    "python/sglang/srt/entrypoints/openai/serving_completions.py",
+    "python/sglang/srt/entrypoints/openai/serving_responses.py"
+  ],
+  "whole": {
+    "exit": 1,
+    "output": "error: patch failed: python/sglang/srt/entrypoints/openai/serving_base.py:4\nerror: python/sglang/srt/entrypoints/openai/serving_base.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_chat.py:1948\nerror: python/sglang/srt/entrypoints/openai/serving_chat.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_completions.py:243\nerror: python/sglang/srt/entrypoints/openai/serving_completions.py: patch does not apply\nerror: patch failed: python/sglang/srt/entrypoints/openai/serving_responses.py:8\nerror: python/sglang/srt/entrypoints/openai/serving_responses.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/scheduler.py:1251\nerror: python/sglang/srt/managers/scheduler.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/tokenizer_manager.py:835\nerror: python/sglang/srt/managers/tokenizer_manager.py: patch does not apply\nerror: patch failed: python/sglang/srt/managers/utils.py:92\nerror: python/sglang/srt/managers/utils.py: patch does not apply\nerror: patch failed: python/sglang/srt/speculative/eagle_worker_v2.py:40\nerror: python/sglang/srt/speculative/eagle_worker_v2.py: patch does not apply\n"
+  },
+  "files": [
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/http_server.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/entrypoints/openai/serving_base.py:4\nerror: python/sglang/srt/entrypoints/openai/serving_base.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/entrypoints/openai/serving_chat.py:1948\nerror: python/sglang/srt/entrypoints/openai/serving_chat.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_completions.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/entrypoints/openai/serving_completions.py:243\nerror: python/sglang/srt/entrypoints/openai/serving_completions.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/entrypoints/openai/serving_responses.py:8\nerror: python/sglang/srt/entrypoints/openai/serving_responses.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/request_disconnect.py",
+      "exists_upstream": false,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/managers/communicator.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/managers/io_struct.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/managers/scheduler.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/managers/scheduler.py:1251\nerror: python/sglang/srt/managers/scheduler.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_control_mixin.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_manager.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/managers/tokenizer_manager.py:835\nerror: python/sglang/srt/managers/tokenizer_manager.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/managers/tp_worker.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/managers/utils.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/managers/utils.py:92\nerror: python/sglang/srt/managers/utils.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/model_executor/forward_batch_info.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/sampling/sampling_batch_info.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_common.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "python/sglang/srt/speculative/eagle_worker_v2.py",
+      "exists_upstream": true,
+      "applies": false,
+      "applies_ignoring_whitespace": false,
+      "reverse_applies": false,
+      "diagnostic": "error: patch failed: python/sglang/srt/speculative/eagle_worker_v2.py:40\nerror: python/sglang/srt/speculative/eagle_worker_v2.py: patch does not apply"
+    },
+    {
+      "path": "python/sglang/srt/speculative/spec_utils.py",
+      "exists_upstream": true,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "test/registered/unit/model_executor/test_draft_extend_device_metadata.py",
+      "exists_upstream": false,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "test/registered/unit/model_executor/test_prefill_metadata_handoff.py",
+      "exists_upstream": false,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "test/registered/unit/sampling/test_identity_grammar_mask.py",
+      "exists_upstream": false,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    },
+    {
+      "path": "test/registered/unit/test_request_disconnect_cleanup.py",
+      "exists_upstream": false,
+      "applies": true,
+      "applies_ignoring_whitespace": true,
+      "reverse_applies": false,
+      "diagnostic": ""
+    }
+  ],
+  "scope": "Textual dry-run only; selected official source; no code execution, GPU test, source migration or serving mutation"
+}

@@ -1,0 +1,23 @@
+{
+  "reference": "docker.io/lmsysorg/sglang:v0.5.20",
+  "index_digest": "sha256:06e4f2ed21afde4ff513cda65070124e727ba23ccaeff7712b8c40e1097d611f",
+  "platform_digest": "sha256:b27fce60bc5494c118c4910702812bcfa8cee67abcdd1ff8b0902f21647552f4",
+  "config_digest": "sha256:7fafb457002ab4d5a2aa6796d7267f086401065d022347b2f49ae366b6c2687a",
+  "platform": "linux/amd64",
+  "layer_count": 70,
+  "compressed_layer_bytes": 15066500054,
+  "annotations": {},
+  "identity_labels": {
+    "org.opencontainers.image.revision": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+    "org.opencontainers.image.source": "https://github.com/sgl-project/sglang",
+    "org.opencontainers.image.url": "https://github.com/sgl-project/sglang/actions/runs/35322364074",
+    "org.opencontainers.image.version": "lmsysorg/sglang:v0.5.20"
+  },
+  "runtime_identity_env": {
+    "CUDA_VERSION": "13.0.3",
+    "SGLANG_BUILD_COMMIT": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+    "SGLANG_BUILD_URL": "https://github.com/sgl-project/sglang/actions/runs/35322364074",
+    "SGLANG_IMAGE_TAG": "lmsysorg/sglang:v0.5.20"
+  },
+  "scope": "registry manifest/config digest verification only; no image pull, dependency inventory, runtime execution or source-commit acceptance"
+}
