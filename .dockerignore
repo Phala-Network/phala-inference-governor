@@ -1,0 +1,6 @@
+.git
+artifacts
+rust/target
+**/__pycache__
+*.egg-info
+.env
