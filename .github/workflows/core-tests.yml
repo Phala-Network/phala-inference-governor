@@ -1,0 +1,56 @@
+name: Standalone core tests
+
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'python/pig_governor/core.py'
+      - 'python/pig_governor/admin.py'
+      - 'python/pig_governor/__init__.py'
+      - 'tests/test_ffi.py'
+      - '.github/workflows/core-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - 'python/pig_governor/core.py'
+      - 'python/pig_governor/admin.py'
+      - 'python/pig_governor/__init__.py'
+      - 'tests/test_ffi.py'
+      - '.github/workflows/core-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CORE_TARGET_DIR: ${{ runner.temp }}/pig-governor-target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Test Rust core and build the real FFI library
+        shell: bash
+        run: |
+          mkdir -p "$CORE_TARGET_DIR"
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/source,readonly" \
+            --mount "type=bind,source=$CORE_TARGET_DIR,target=/target" \
+            --env CARGO_HOME=/tmp/cargo \
+            --env CARGO_TARGET_DIR=/target \
+            rust:1.98.1-bookworm@sha256:c49256cbe5ea0188bc658a689500d70c41eb51f009a7a7be209caf60a944f3ec \
+            sh -eu -c '
+              cargo test --manifest-path /source/rust/Cargo.toml --locked --offline
+              cargo build --manifest-path /source/rust/Cargo.toml --release --locked --offline
+            '
+      - name: Test Python against the real Rust FFI library
+        shell: bash
+        env:
+          PYTHONPATH: python
+          PIG_GOVERNOR_LIBRARY: ${{ runner.temp }}/pig-governor-target/release/libpig_governor_core.so
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s tests -p test_ffi.py -v

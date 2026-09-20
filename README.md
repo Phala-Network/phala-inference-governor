@@ -75,8 +75,10 @@ See [development acceptance](docs/validation/DEV_V0520_ACCEPTANCE.md) for exact
 runtime identity, retained failed probes and evidence boundaries. Strict dynamic
 platform policy failed; launch/model measurement coverage remains unproven.
 Final-image verification, reproducible image publication and the authorized
-production test remain pending. Package version 0.1.0 identifies this source;
+production test remain pending. Package version 0.1.1 identifies this source;
 it is not a claim that those release gates have already passed.
+Version 0.1.1 identifies the split Governor component with standalone core CI;
+historical v0.1.0 tags and mixed-source image evidence remain unchanged.
 
 [Execution plan](docs/PIG_SGLANG_NATIVE_QOS_DESIGN.md) ·
 [Upgrade assessment](docs/SGLANG_V0520_ASSESSMENT.md) ·
