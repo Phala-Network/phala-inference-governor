@@ -3,12 +3,13 @@
 - **phala-inference-governor** owns the Rust control core, Python adapter,
   authenticated policy API and minimal SGLang hooks. It does not own generic
   serving repairs, model compatibility or the composed SGLang image.
-- **sglang-serving-patches** owns independent lifecycle/cleanup, metadata,
-  grammar/schema, protocol, auth and diagnostic fixes. Versioned `common/` and
-  `models/<model>/` directories separate shared behavior from explicitly selected
-  model compatibility. It must work without installing Governor.
-- **Deployment build configuration** independently pins both repository commits,
-  upstream SGLang and immutable base; selects common/model/Governor patches;
+- **Phala-Network/sglang** owns the complete shared engine source, including
+  lifecycle/cleanup, metadata, grammar/schema, protocol, auth, diagnostics and
+  model compatibility. Serving fixes must work without installing Governor.
+- **sglang-serving-patches** is an optional deterministic export of that source,
+  not an independent implementation or a required build/release step.
+- **Deployment build configuration** pins the complete engine and Governor commits,
+  upstream SGLang and immutable base;
   produces `ghcr.io/phala-network/sglang`, associated with Phala-Network/sglang.
 - **PIG TAIL** remains the separate transport/TEE/attestation layer. Legacy Guard
   history is not renamed or absorbed.

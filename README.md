@@ -14,19 +14,19 @@ ownership. Governor does not replace those mechanisms.
 
 The current source candidate targets official SGLang v0.5.20, commit
 `94602c9c2b7cbdb8efd5c52802dac6a1c180089e`.
-Apply the independently pinned shared ordered serving patch stack from
-[sglang-serving-patches](https://github.com/Phala-Network/sglang-serving-patches),
-then this repository's [minimal Governor hooks](patches/sglang/v0.5.20/README.md).
-General lifecycle, auth/diagnostic, worker and schema repairs live in that
-serving repository, including the existing `PIG_AUTH_FROM_TOKEN` switch.
-Model-specific code activates only in its relevant module/model/configuration.
-There is one stack per upstream version, without per-model common copies or
-mandatory per-patch PR approval. Preserve frozen historical inputs while
-integrating new increments into the shared stack.
-Deployment build configuration pins both source commits. Combined runtime images
+Use the complete shared engine source in
+[Phala-Network/sglang](https://github.com/Phala-Network/sglang), including general
+lifecycle, auth/diagnostic, worker, schema and model compatibility repairs.
+Governor owns its component and [minimal integration hooks](patches/sglang/v0.5.20/README.md).
+[sglang-serving-patches](https://github.com/Phala-Network/sglang-serving-patches)
+is an optional deterministic export of the complete source, not a separately
+maintained implementation or a required release step. Model-specific code
+activates only in its relevant module/model/configuration. Preserve frozen
+historical inputs and evidence while integrating new changes in the shared source.
+Deployment build configuration pins the complete engine and Governor commits. Combined runtime images
 are published to `ghcr.io/phala-network/sglang`, associated with
 [Phala-Network/sglang](https://github.com/Phala-Network/sglang); this repository
-publishes Governor source and patches, not SGLang runtime images.
+publishes the Governor component and hooks, not SGLang runtime images.
 
 The initial adapter supports **TP1/PP1/DP1, non-overlap scheduling, no PD
 disaggregation**, with ordinary text/images and radix cache enabled. Unsupported
@@ -88,4 +88,6 @@ historical v0.1.0 tags and mixed-source image evidence remain unchanged.
 [Upgrade assessment](docs/SGLANG_V0520_ASSESSMENT.md) ·
 [Repository boundary](docs/REPOSITORY_BOUNDARY.md)
 
-The serving source repair stack is available as draft PRs #2–#19 in Phala-Network/sglang. Its patch/profile repository links each actual commit and parent; the deployment builder rejects Governor as an SGLang image publication target.
+The complete engine repository is the entry point for serving repairs and their
+integration status. Historical split-patch validation above records provenance;
+it does not require users to assemble per-patch PRs or profiles.
