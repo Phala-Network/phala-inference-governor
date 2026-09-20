@@ -14,11 +14,15 @@ ownership. Governor does not replace those mechanisms.
 
 The current source candidate targets official SGLang v0.5.20, commit
 `94602c9c2b7cbdb8efd5c52802dac6a1c180089e`.
-Apply the independently pinned common and explicitly selected model patches from
+Apply the independently pinned shared ordered serving patch stack from
 [sglang-serving-patches](https://github.com/Phala-Network/sglang-serving-patches),
 then this repository's [minimal Governor hooks](patches/sglang/v0.5.20/README.md).
 General lifecycle, auth/diagnostic, worker and schema repairs live in that
 serving repository, including the existing `PIG_AUTH_FROM_TOKEN` switch.
+Model-specific code activates only in its relevant module/model/configuration.
+There is one stack per upstream version, without per-model common copies or
+mandatory per-patch PR approval. Preserve frozen historical inputs while
+integrating new increments into the shared stack.
 Deployment build configuration pins both source commits. Combined runtime images
 are published to `ghcr.io/phala-network/sglang`, associated with
 [Phala-Network/sglang](https://github.com/Phala-Network/sglang); this repository
