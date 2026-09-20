@@ -26,14 +26,14 @@ jobs:
   core-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      CORE_TARGET_DIR: ${{ runner.temp }}/pig-governor-target
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Test Rust core and build the real FFI library
         shell: bash
+        env:
+          CORE_TARGET_DIR: ${{ runner.temp }}/pig-governor-target
         run: |
           mkdir -p "$CORE_TARGET_DIR"
           docker run --rm --network none \
