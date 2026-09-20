@@ -1,5 +1,38 @@
 # PIG/SGLang：插件化精简执行计划
 
+## 当前职责（优先于下方历史分工）
+
+本任务只负责 PIG/Governor 和 TAIL 的实现、调试、测试及必要本地开发提交。
+共同 SGLang 源码整合、仓库/分支/PR/CI 与发布管理已交给「接手 Governor 与 TAIL
+仓库管理」任务 `01a0bd7d-f09a-7070-8053-dcc048ed8c0f`；下方旧的本任务统一整合、
+推送或发布待办不再作为这里的执行任务。模型任务直接向接手任务同步，不经这里转发。
+PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代替最终镜像及服务验收。
+
+当前 PIG/TAIL 验收剩余项：
+- `55e3aa2` 的超大整数 TPS 输入修复已完成源代码级红绿测试；进入最终镜像后仍需通过真实管理路径确认 HTTP 400、无 scheduler 派发及策略/历史不变。
+- 新最终镜像仍须验证无效/缺失凭证拒绝、合法 GET/PATCH、epoch/revision CAS 和热更新不重启；复用既有有效测试，不重复无关压测。
+- 在包含原生 owner 修复的最终运行时检查默认/字符串 RID、n>1、文本/多模态取消及自然排空；不要在已知未修复的旧 govdev2 现场主动复现 owner 泄漏。
+- TAIL 透传和 TLS/证明绑定沿用既有证据范围；strict dynamic-platform 及启动/模型度量缺口不能标成通过。新的镜像/部署身份由接手任务提供后再做对应验收，不修改它管理的共同源码或发布状态。
+
+## 2026-09-20 统一补丁栈修订（优先于历史状态）
+
+本日最新执行优先项：统一真实 SGLang 源码、少量必要构建配置和完整版本交付是主线。
+补丁仓库不再是人工维护/发布的必经层；需要客户 diff 时从完整源码自动导出可选附件，
+不双份维护、不加额外 PR/profile gate，不推进独立补丁 CI/发布框架。已有仓库、
+冻结输入和有效来源/回归证据保留。下列五步/manifest 描述作为本日较早阶段记录，
+遇到冲突以本段为准；源码正确性、必要验证和镜像标准不变。
+
+- 五步链路：共享通用补丁 → 同集合模型专属补丁 → Governor 最小 hooks/组件 → 固定官方基线上的完整 SGLang 源码分支 → 标准不可变镜像。
+- serving-patches 是同一上游版本的一份有序补丁集合；模型目录只标职责，专属逻辑按模块/模型/配置启用。取消每模型复制 common/profile/CI 与每补丁必须人工 PR 审批的规则；确有依赖互斥才保留必要变体。
+- 可在 SGLang 工作树开发、测试、rebase 后确定性导出。完整发布分支从固定输入生成，不额外手改第二份实现。保留真实 commit/parent、顺序、哈希、完整 tree、来源和回归；代理复查不冒称人工批准。
+- Governor 只拥有 Rust 核、Python adapter、外部策略 API 与必要接点；通用服务修复属于共享栈。包含 Governor 不等于对所有模型/拓扑启用或已验证。TAIL 独立。
+- 组合镜像仅发布 ghcr.io/phala-network/sglang，OCI source 为 Phala-Network/sglang、revision 为完整引擎 commit。不覆盖旧 tag、历史镜像或证据，不 force-push main。
+- 公共清单、校验器、完整发布分支由本任务统一整合；模型任务提交增量和证据。GitHub 继承 workflow 启停/旧 PR 行政收尾由流程管理任务单独负责，避免并发改状态。
+- 当前冻结候选：serving 9b6580d、Governor bcc37a3(0.1.1)、engine 828500b/tree 0d159027。源码红绿及受影响回归保留；prepare/runner 22项测试和实际完整tree验证已通过，真实镜像未构建。冻结输入不因本次流程调整作废。
+- 整合次序：先将现有20项选择收敛为单一有序manifest并证明tree等价，再接入GLM/DS/Kimi增量；v0.5.19多模型历史逐项审查重叠、上游覆盖与XGrammar依赖，不盲目叠加。需要修改行为时补受影响回归，不重跑无关GPU实验。
+- 标准builder可用64.4GB；实测历史同基线压缩层15.1GB、解压tar36.6GB、OCI15.1GB，尚不足覆盖保守全新构建峰值。保留旧OCI，容量解决前不启动大构建。
+- 源码/CI/镜像/部署分别记录。e4尚未部署；部署授权仍仅e4，不扩大CVM或路由范围。平均TPS软目标和鉴权热更新合同不变。
+
 更新：2026-09-19。用户最新架构指令优先：独立 Rust 控制核心、薄 Python 插件、少量明确可维护的 SGLang 接入点；删除旧实验路径与重复职责，不搬文件掩盖耦合、不用 monkeypatch、不重写 SGLang。
 
 ## 产品合同
@@ -10,7 +43,7 @@
 - Python 接入复用原生生命周期、控制 IPC；worker 同步、真实分配和取消清理由 SGLang 原生路径拥有。
 - TAIL 的信任/TEE 边界保持独立；旧全预测、日志、资格门等实验实现不机械迁入 Rust。原 A–F 中仍有意义的性能、资源与可信链验证继续保留，不能用旧测试数量替代新架构验收。
 
-## 当前实施与验证
+## 历史实施与验证（用于追溯，当前分仓进度以上方为准）
 
 - 实际任务目录：`C:/Users/zozyo/Downloads/phala/phala-models-compose/phala-models-compose/tmp/pig-sglang-native-qos-20260915`。自动工作树不是本任务编辑现场。
 - 新独立仓库：`C:/Users/zozyo/Downloads/phala/phala-inference-governor`（GitHub: Phala-Network/phala-inference-governor，公开）；精简 SGLang 候选：`source-plugin/`，基于开发基线 `1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a`。原 `source/` 和 r44 证据保留供复核/恢复，不作为新插件依赖。

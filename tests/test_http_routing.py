@@ -2,6 +2,7 @@
 import ast
 import json
 import unittest
+import sglang
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -37,7 +38,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
                     manager.close()
 
     def test_upstream_endpoint_uses_the_verified_auth_level(self):
-        path = Path('/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py')
+        path = Path(sglang.__file__).resolve().parent / 'srt/entrypoints/http_server.py'
         module=ast.parse(path.read_text())
         endpoint_node=next(n for n in module.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='governor_policy')
         decorators=[ast.unparse(n) for n in endpoint_node.decorator_list]

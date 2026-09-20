@@ -3,7 +3,7 @@
 The authenticated HTTP layer transports this command. It must not retry PATCH
 on uncertain transport outcome, and must never expose an unauthenticated route.
 """
-import math
+from .core import _finite
 
 
 def execute(core, operation, now, payload=None):
@@ -21,7 +21,6 @@ def execute(core, operation, now, payload=None):
         raise ValueError("Invalid epoch")
     if type(revision) is not int or not 0 < revision < 2**53:
         raise ValueError("Invalid revision")
-    if type(reference) not in (int, float) or not math.isfinite(reference) or reference < 0:
-        raise ValueError("Invalid TPS reference")
+    _finite(reference)
     core.update_reference(epoch, revision, reference)
     return core.snapshot(now)

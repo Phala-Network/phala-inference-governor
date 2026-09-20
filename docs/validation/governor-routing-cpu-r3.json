@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "prior_failure_retained": true,
+  "prior_report_sha256": "d8d5d163302be2baa9a3187c6d057a516bfd5e29790b04221f1fd2e72f10d1c5",
+  "correction": "Routing AST check now resolves actual imported sglang instead of hardcoded image checkout",
+  "counts": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "runtime_governor_source_unchanged": true,
+  "test_sha256": "f5bbead8addb48c99625105e47b51ecdcf761d964b8f538973e612b2bdb5c14b",
+  "scope": "Only failed routing-source assertion rerun; passing model and Governor cases inherited by exact source identity, not counted again."
+}
