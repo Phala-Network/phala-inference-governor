@@ -1,231 +1,25 @@
 {
+  "schema": "phala.governor-hooks.v1",
   "upstream": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
-  "patches": {
-    "0001-governor-hooks.patch": "81a31b96b35fd01427783eb14491c40fdfc076db7cdf8b329b5b1319d1878265",
-    "0002-serving-cleanup.patch": "41c1988c55d8d1517c475717412d58afa1267d83d04b5e8fcc04c2dbafb70b6f",
-    "0003-worker-metadata-grammar.patch": "cabae52d9b0ea5322ca891e8f8715e18fe021af907fb0668f352044e64335d29",
-    "0004-lifecycle-observation.patch": "b740195c2b88a575bd22712f1840fa0edf83d51aea8f4ab89b6c9fbbb12ebef0"
+  "requires": {
+    "common_patch_sha256": "5d4d3db08a006c9957dd18641260d3ca5f315e2cac5a45229c73dc2f71ab68b6",
+    "repository": "https://github.com/Phala-Network/sglang-serving-patches"
   },
-  "files": [
+  "patches": [
     {
-      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
-      "added": 7,
-      "deleted": 0,
-      "input_sha256": "ddafbeda50171ea7d7581bcc069810d3b8ee39e2b8dc55152143dca4c456ba76"
-    },
-    {
-      "path": "python/sglang/srt/entrypoints/http_server.py",
-      "added": 19,
-      "deleted": 0,
-      "input_sha256": "e6e53aa70413271b15d65c22176056face97ebc575b2358c384669f99558b04d"
-    },
-    {
-      "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
-      "added": 79,
-      "deleted": 0,
-      "input_sha256": "a50643d3aaa6f56a5a7879f29f5b55178619f313bd22ddebe6ac60b2d4fe87fb"
-    },
-    {
-      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
-      "added": 9,
-      "deleted": 23,
-      "input_sha256": "86f549d68de29ca703154b47f64171f4fd06013a6099e09475f46dd3e5008169"
-    },
-    {
-      "path": "python/sglang/srt/entrypoints/openai/serving_completions.py",
-      "added": 9,
-      "deleted": 22,
-      "input_sha256": "1f755b3d2318de78b7b14b14697fd162e6371d6a630bb3ed09693fadccf0ed97"
-    },
-    {
-      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
-      "added": 73,
-      "deleted": 49,
-      "input_sha256": "bf29d460ce0310c17207db8292073ff77ba9e635bd1dc0fbaed07ba0d528ca5e"
-    },
-    {
-      "path": "python/sglang/srt/entrypoints/request_disconnect.py",
-      "added": 51,
-      "deleted": 0,
-      "input_sha256": "427547328d08c8288c496b9750299693e7d4e0e0e8858dff697fcbcb0efac9ae"
-    },
-    {
-      "path": "python/sglang/srt/managers/communicator.py",
-      "added": 21,
-      "deleted": 8,
-      "input_sha256": "485569fbf54ba0c104855b7884b4387bc8639c072b8cddfa40c4ea09de3b06fd"
-    },
-    {
-      "path": "python/sglang/srt/managers/io_struct.py",
-      "added": 6,
-      "deleted": 3,
-      "input_sha256": "9507cada686ff1f76de4185d71bc1775ddcb420691092ac3814985b86bc30038"
-    },
-    {
-      "path": "python/sglang/srt/managers/scheduler.py",
-      "added": 37,
-      "deleted": 4,
-      "input_sha256": "2e1e9a9cdbb92c137e07b195e0e933ee0c54dc4f42c8892e65ebb6507fe49e87"
-    },
-    {
-      "path": "python/sglang/srt/managers/tokenizer_control_mixin.py",
-      "added": 1,
-      "deleted": 0,
-      "input_sha256": "9a59dafbd7ecfbb4a5086eab3b25d510165023d4687c6ddbc983818322d45aed"
-    },
-    {
-      "path": "python/sglang/srt/managers/tokenizer_manager.py",
-      "added": 48,
-      "deleted": 10,
-      "input_sha256": "4de336f90534c702e69ee752bfe13cc0301539c76d3f140121ac9d011c9f6896"
-    },
-    {
-      "path": "python/sglang/srt/managers/tp_worker.py",
-      "added": 38,
-      "deleted": 0,
-      "input_sha256": "12ce75713498922e37b750acd5490631c54716dae0846cf7e5c7c77650f5e630"
-    },
-    {
-      "path": "python/sglang/srt/managers/utils.py",
-      "added": 6,
-      "deleted": 1,
-      "input_sha256": "180c036f63fb7871c2b059fa07b3f965f292f42ba55baff72d5b6aed40d2f3c2"
-    },
-    {
-      "path": "python/sglang/srt/model_executor/forward_batch_info.py",
-      "added": 33,
-      "deleted": 8,
-      "input_sha256": "6013b87aa2f009a92c49a5f026e27545751a6f617c9f129abd32501be05d8355"
-    },
-    {
-      "path": "python/sglang/srt/observability/req_time_stats.py",
-      "added": 18,
-      "deleted": 1,
-      "input_sha256": "04798fbb738ecb9cf17f7579d83be4943de12da05abd6dddb1e26dd9ef92d6ad"
-    },
-    {
-      "path": "python/sglang/srt/sampling/sampling_batch_info.py",
-      "added": 16,
-      "deleted": 2,
-      "input_sha256": "549f951a90b626c0819f809beffa1cc9e7b7e28c75ccd8401615af68ed1c2c15"
-    },
-    {
-      "path": "python/sglang/srt/speculative/eagle_worker_common.py",
-      "added": 25,
-      "deleted": 0,
-      "input_sha256": "890577356ce849ad01d8844815d62a3043171e8878e2fe0978d71e1bbf330b8f"
-    },
-    {
-      "path": "python/sglang/srt/speculative/eagle_worker_v2.py",
-      "added": 45,
-      "deleted": 2,
-      "input_sha256": "4307a6cbe8cf283a1e3bf1934d7bb0c6dccf89f5da57433383d60572849283c1"
-    },
-    {
-      "path": "python/sglang/srt/speculative/spec_utils.py",
-      "added": 11,
-      "deleted": 0,
-      "input_sha256": "8b0e38bc9e0dd9d44658e0e4aae77c5acabf47baa7be3379ffe9ade72567ca0e"
-    },
-    {
-      "path": "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py",
-      "added": 53,
-      "deleted": 0,
-      "input_sha256": "895fbfa19aa01739fa1bbdfd6b4d89347f09dfe69cbb87d621066159f2ae8c82"
-    },
-    {
-      "path": "test/registered/unit/model_executor/test_draft_extend_device_metadata.py",
-      "added": 283,
-      "deleted": 0,
-      "input_sha256": "61455da6fa7c8f5df1993ab471e141a8b11bfc8750fe44dff439f31405a3a3fc"
-    },
-    {
-      "path": "test/registered/unit/model_executor/test_prefill_metadata_handoff.py",
-      "added": 316,
-      "deleted": 0,
-      "input_sha256": "e57e98a8e6337e18940d5f21fc986cb25fc9d238fd4bbf10087622fa78ca8fd0"
-    },
-    {
-      "path": "test/registered/unit/observability/test_queue_time_retract.py",
-      "added": 131,
-      "deleted": 0,
-      "input_sha256": "206f2ff55b203420f61f2f2d682343d7dec829d0d4bfae0fc4a7356a5d5fedf9"
-    },
-    {
-      "path": "test/registered/unit/sampling/test_identity_grammar_mask.py",
-      "added": 193,
-      "deleted": 0,
-      "input_sha256": "4ad0eaa7e10889a59cb6bf754f6e9835e48209ff54fff2084312076593afdf8e"
-    },
-    {
-      "path": "test/registered/unit/test_request_disconnect_cleanup.py",
-      "added": 308,
-      "deleted": 0,
-      "input_sha256": "727a5754be174300a0d435132d141cf31a305d8b3a10afbad2b000784293385e"
+      "path": "0001-governor-hooks.patch",
+      "changed_files": [
+        "python/sglang/srt/entrypoints/http_server.py",
+        "python/sglang/srt/managers/io_struct.py",
+        "python/sglang/srt/managers/scheduler.py"
+      ],
+      "sha256": "ebf6d2a2e8ef4c9a2c768803cbaf50eda7fc580ae0c888b9aff85297ef34b1a6"
     }
   ],
-  "reproduces_selected_files": 26,
-  "normalization": "LF text comparison; raw candidate hashes recorded separately",
-  "validation": "All four patches reproduced against pinned pristine source. Lifecycle delta passed 32 targeted CPU tests on model candidate; no new live wheel deployed. Prior CPU evidence retained separately.",
-  "runtime": {
-    "added": 552,
-    "deleted": 133,
-    "files": 20
-  },
-  "tests": {
-    "added": 1284,
-    "deleted": 0
-  },
-  "prior_manifest_sha256": "a7873ddc85438797c43ae7bca36561495d3bf8331547f93a8f54926d10dae530",
-  "lifecycle_manifest_sha256": "4e337e332a24ecab4632a2180905ce0eed770a15f9ba613b4e34c1107a081368",
-  "apply_checks": [
-    {
-      "patch": "0001-governor-hooks.patch",
-      "check_only": true,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0001-governor-hooks.patch",
-      "check_only": false,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0002-serving-cleanup.patch",
-      "check_only": true,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0002-serving-cleanup.patch",
-      "check_only": false,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0003-worker-metadata-grammar.patch",
-      "check_only": true,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0003-worker-metadata-grammar.patch",
-      "check_only": false,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0004-lifecycle-observation.patch",
-      "check_only": true,
-      "exit": 0,
-      "stderr": ""
-    },
-    {
-      "patch": "0004-lifecycle-observation.patch",
-      "check_only": false,
-      "exit": 0,
-      "stderr": ""
-    }
-  ]
+  "model_patches_required": false,
+  "historical_source_commit": "b24dbadb3a8a9a1c701bb8cac12bd7648a0bb157",
+  "validation": {
+    "patch_reproduction": "../../../docs/validation/split-reproduction-r1.json",
+    "execution_regressions": "common without Governor and selected model groups passed; Governor failed hardcoded test path corrected, targeted rerun passed; final image pending"
+  }
 }

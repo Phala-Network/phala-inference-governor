@@ -1,18 +1,20 @@
 # Repository boundary
 
-Phala Inference Governor is maintained in its own repository:
-https://github.com/Phala-Network/phala-inference-governor
+- **phala-inference-governor** owns the Rust control core, Python adapter,
+  authenticated policy API and minimal SGLang hooks. It does not own generic
+  serving repairs, model compatibility or the composed SGLang image.
+- **sglang-serving-patches** owns independent lifecycle/cleanup, metadata,
+  grammar/schema, protocol, auth and diagnostic fixes. Versioned `common/` and
+  `models/<model>/` directories separate shared behavior from explicitly selected
+  model compatibility. It must work without installing Governor.
+- **Deployment build configuration** independently pins both repository commits,
+  upstream SGLang and immutable base; selects common/model/Governor patches;
+  produces `ghcr.io/phala-network/sglang`, associated with Phala-Network/sglang.
+- **PIG TAIL** remains the separate transport/TEE/attestation layer. Legacy Guard
+  history is not renamed or absorbed.
 
-It is distinct from Phala Inference Guard. Governor owns the independent Rust
-control core, thin Python bindings, explicit SGLang integration patches, and
-their tests. It does not absorb Guard's history or its TEE/attestation layer.
-
-The SGLang tree remains an upstream dependency. Keep the version-pinned patch in
-`patches/sglang/`; do not vendor the full SGLang checkout or use runtime method
-replacement to hide integration changes. Generic serving fixes are separately
-identified in the validation report so they can be upstreamed or retired.
-
-Development evidence from the earlier native-QoS experiments is retained outside
-this repository. No old planning/qualification/admission/journal implementation
-is required by the new core. The current public repository is a development
-candidate, not a release or production qualification.
+The v0.5.20 split reproduces the historical combined source bytes. Historical
+mixed patches/images remain in immutable Git/tag/registry history and are not
+new deployment candidates. New composition tests, image qualification and e4
+acceptance are required independently. No runtime source mounts, method
+replacement, startup patching or source download is used for integration.

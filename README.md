@@ -14,11 +14,15 @@ ownership. Governor does not replace those mechanisms.
 
 The current source candidate targets official SGLang v0.5.20, commit
 `94602c9c2b7cbdb8efd5c52802dac6a1c180089e`.
-Apply the [ordered versioned patches](patches/sglang/v0.5.20/README.md).
-The first six cover explicit Governor hooks, independent lifecycle/serving fixes
-and environment authentication. The seventh retains the Qwen3.8-27B-specific
-serving compatibility changes for this model release. No full SGLang checkout,
-monkeypatching, class replacement or runtime source transformation is required.
+Apply the independently pinned common and explicitly selected model patches from
+[sglang-serving-patches](https://github.com/Phala-Network/sglang-serving-patches),
+then this repository's [minimal Governor hooks](patches/sglang/v0.5.20/README.md).
+General lifecycle, auth/diagnostic, worker and schema repairs live in that
+serving repository, including the existing `PIG_AUTH_FROM_TOKEN` switch.
+Deployment build configuration pins both source commits. Combined runtime images
+are published to `ghcr.io/phala-network/sglang`, associated with
+[Phala-Network/sglang](https://github.com/Phala-Network/sglang); this repository
+publishes Governor source and patches, not SGLang runtime images.
 
 The initial adapter supports **TP1/PP1/DP1, non-overlap scheduling, no PD
 disaggregation**, with ordinary text/images and radix cache enabled. Unsupported
@@ -50,12 +54,17 @@ ctypes from a prebuilt library, without runtime Cargo builds.
 
 ## Validation and release status
 
-The seven-patch series reproduces all 59 frozen changed source/test files from
-the official commit. [The release source manifest](patches/sglang/v0.5.20/release-manifest.json)
-records their exact LF hashes. Source validation includes real SGLang lifecycle,
-HTTP/CAS/auth, cancellation, parallel sampling and queue-time regressions. The
-latest affected auth/lifecycle suite passed 88 test methods with zero skips;
-these overlap prior suites and are not additive test counts.
+The split patch composition passes application and Python AST checks for six
+common/model/Governor selections. The complete Qwen combination reproduces all
+59 historical source/test files exactly. Common and selected model CPU regressions now pass; composed-image
+verification remains pending; the previous mixed-source v0.1.0 image is historical
+and is not a new deployment candidate. The minimal Governor patch changes only
+three runtime files.
+
+Historical validation includes real SGLang lifecycle, HTTP/CAS/auth, cancellation,
+parallel sampling and queue-time regressions. The affected auth/lifecycle suite
+passed 88 methods with zero skips; counts overlap other suites. Those results
+remain provenance, not automatic acceptance of the newly split composition.
 
 The development model completed a frozen 1050-request workload, selected
 protocol/image/cancellation checks, explicit tokenizer-owner drain and native
@@ -72,3 +81,5 @@ it is not a claim that those release gates have already passed.
 [Execution plan](docs/PIG_SGLANG_NATIVE_QOS_DESIGN.md) ·
 [Upgrade assessment](docs/SGLANG_V0520_ASSESSMENT.md) ·
 [Repository boundary](docs/REPOSITORY_BOUNDARY.md)
+
+The serving source repair stack is available as draft PRs #2–#19 in Phala-Network/sglang. Its patch/profile repository links each actual commit and parent; the deployment builder rejects Governor as an SGLang image publication target.

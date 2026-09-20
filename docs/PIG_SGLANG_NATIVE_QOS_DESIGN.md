@@ -1,5 +1,18 @@
 # PIG/SGLang：插件化精简执行计划
 
+## 2026-09-20 分仓修订（优先于下方历史发布状态）
+
+- `Phala-Network/sglang-serving-patches` 拥有关闭 Governor 后仍需要的服务修复：生命周期、资源清理、worker metadata、grammar/schema、工具调用、reasoning、鉴权及诊断。逐项审查原七组补丁，不能仅迁出第七组。
+- 修复按 `patches/sglang/<version>/common/` 与 `patches/sglang/<version>/models/<model>/` 在目录层面隔离；模型特有修复必须显式选择，不进入所有模型的默认补丁。
+- Governor 仅保留 Rust 控制核心、Python 适配、策略 API 与必要的最小接点。通用 IPC 修复和服务诊断不能因为最先为 Governor 引入而继续归 Governor 所有。
+- 部署构建配置分别固定两个仓库的提交、上游提交、补丁顺序和哈希，再组合镜像；保留来源和回归证据。必须验证 common、指定模型且关闭 Governor、指定模型加 Governor 三种组合的实际边界。
+- 组合后的 SGLang 运行镜像只发布到 `ghcr.io/phala-network/sglang`，关联 `Phala-Network/sglang`。Governor 是源码/补丁仓库，不再以其 GHCR 包发布 SGLang 镜像；旧 Governor 包 Public 设置不再是新交付的前置条件。
+- 服务修复的唯一人工源码入口为 `Phala-Network/sglang` 的真实文件修复提交/PR；serving-patches 从来源提交确定性导出并记录完整 commit、父基线/依赖与审查 PR。Governor hooks 的人工入口仍在 Governor；组合源码分支是派生视图，不允许手工双向维护。
+- `common` 只表示语义通用，不代表默认全量选择或跨模型/拓扑验收。模型 profile 显式列出 common/model 补丁及顺序；锁定来源、profile、补丁哈希与最终源码 tree。镜像结果单独记录，避免摘要循环。
+- 当前四组提取产物仅为职责边界和原59文件的无丢失验证候选；尚未建立逐问题源码提交/PR映射，不可当作已完成的确定性来源导出发布。先完成 Qwen3.8-27B 一条完整链路，再扩展其他模型。
+- 已发布的混合补丁镜像 `v0.1.0@sha256:70cb60a3da3e16ce80fe37fed5ae3a640f194778c4597b9c26197a256a73f82c` 和源码标签保留为历史工件，不覆盖或重打标签；现有 GitHub Release 草稿及 e4 部署候选不满足本修订，暂停其晋升。
+- e4 尚未部署。新的分仓构建和验证完成前，不沿用历史 mixed image 的通过结果宣称新架构已交付。
+
 更新：2026-09-19。用户最新架构指令优先：独立 Rust 控制核心、薄 Python 插件、少量明确可维护的 SGLang 接入点；删除旧实验路径与重复职责，不搬文件掩盖耦合、不用 monkeypatch、不重写 SGLang。
 
 ## 产品合同

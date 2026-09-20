@@ -1,6 +1,6 @@
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
-@@ -815,6 +815,16 @@
+@@ -816,6 +816,16 @@
      return await server_info()
  
  
@@ -17,93 +17,9 @@
  @app.get("/server_info")
  async def server_info():
      """The startup configuration, plus live scheduler state.
---- a/python/sglang/srt/managers/communicator.py
-+++ b/python/sglang/srt/managers/communicator.py
-@@ -4,6 +4,7 @@
- import copy
- import logging
- from typing import Callable, Generic, List, Optional, TypeVar
-+from uuid import uuid4
- 
- logger = logging.getLogger(__name__)
- 
-@@ -27,6 +28,7 @@
-         send: Callable[[T], None],
-         fan_out: int,
-         mode: str = "queueing",
-+        correlate: bool = False,
-     ):
-         self._send = send
-         self._fan_out = fan_out
-@@ -35,8 +37,12 @@
-         self._result_values: Optional[List[T]] = None
-         self._result_fan_out: Optional[int] = None
-         self._queueing_lock = asyncio.Lock()
-+        self._correlate = correlate
-+        self._nonce = None
- 
-         assert mode in ["queueing", "watching"]
-+        if correlate and mode != "queueing":
-+            raise ValueError("Correlated control requires queueing mode")
- 
-     async def queueing_call(self, obj: T):
-         # asyncio.Lock is FIFO-fair: a new caller cannot acquire while earlier
-@@ -44,17 +50,20 @@
-         # arrival order. It also releases on exception/cancellation, so a
-         # failed caller never blocks the callers queued behind it.
-         async with self._queueing_lock:
--            if obj is not None:
--                self._send(obj)
--
-             self._result_event = asyncio.Event()
-             self._result_values = []
-             self._result_fan_out = self._fan_out
--            await self._result_event.wait()
--            result_values = self._result_values
--            self._result_event = self._result_values = None
--            self._result_fan_out = None
--            return result_values
-+            self._nonce = uuid4().hex if self._correlate else None
-+            try:
-+                if obj is not None:
-+                    if self._correlate:
-+                        obj.control_nonce = self._nonce
-+                    self._send(obj)
-+                await self._result_event.wait()
-+                return self._result_values
-+            finally:
-+                self._result_event = self._result_values = None
-+                self._result_fan_out = self._nonce = None
- 
-     async def watching_call(self, obj):
-         if self._result_event is None:
-@@ -88,6 +97,10 @@
-         self._fan_out = fan_out
- 
-     def handle_recv(self, recv_obj: T):
-+        if self._correlate and (
-+            self._nonce is None or getattr(recv_obj, "control_nonce", None) != self._nonce
-+        ):
-+            return
-         if (
-             self._result_values is None
-             or self._result_event is None
 --- a/python/sglang/srt/managers/io_struct.py
 +++ b/python/sglang/srt/managers/io_struct.py
-@@ -2100,7 +2100,7 @@
- 
- 
- class GetInternalStateReq(BaseReq, kw_only=True):
--    pass
-+    control_nonce: Optional[str] = None
- 
- 
- class GetInternalStateReqOutput(BaseReq, kw_only=True):
-@@ -2108,15 +2108,18 @@
-     # producer sanitizes it with msgspec_to_builtins so every value is
-     # msgpack-native.
-     internal_state: Dict[str, Any]
-+    control_nonce: Optional[str] = None
+@@ -2113,8 +2113,8 @@
  
  
  class SetInternalStateReq(BaseReq, kw_only=True):
@@ -111,15 +27,9 @@
 -    server_args: Dict[str, Union[int, float]]
 +    # Numeric knobs or a namespaced extension payload; scheduler validates keys.
 +    server_args: Dict[str, Union[int, float, Dict[str, Any]]]
-+    control_nonce: Optional[str] = None
+     control_nonce: Optional[str] = None
  
  
- class SetInternalStateReqOutput(BaseReq, kw_only=True):
-     updated: bool
-+    control_nonce: Optional[str] = None
- 
- 
- class ProfileReqType(Enum):
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
 @@ -466,6 +466,11 @@
@@ -147,7 +57,7 @@
          if self._prefill_decode_interval_remaining == 0:
              return False
  
-@@ -3649,7 +3663,7 @@
+@@ -3654,7 +3663,7 @@
  
          if self.dllm_config is not None:
              new_batch = self.get_new_batch_dllm(running_batch)
@@ -156,7 +66,7 @@
              new_batch = None
          else:
              prefill_plan = self.get_new_batch_prefill(running_batch)
-@@ -4622,6 +4636,8 @@
+@@ -4627,6 +4636,8 @@
          elif batch.forward_mode.is_idle():
              self.batch_result_processor.process_batch_result_idle(batch, result)
  
@@ -165,7 +75,7 @@
          self._record_step_counters(batch, result)
  
          self.metrics_reporter.log_batch_result_stats(batch, result)
-@@ -5013,6 +5029,8 @@
+@@ -5018,6 +5029,8 @@
          # Resolved config (pristine server_args + post-publish overrides) so a
          # readback reflects values changed via /set_internal_state, not startup.
          ret = get_context().resolved_server_args_dict()
@@ -174,12 +84,7 @@
          ret["world_size"] = compute_world_size(
              enable_dp_attention=get_parallel().enable_dp_attention,
              dp_size=get_parallel().dp_size,
-@@ -5068,10 +5086,18 @@
-         # consumes it.
-         ret.pop("custom_sigquit_handler", None)
- 
--        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret))
-+        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret), control_nonce=recv_req.control_nonce)
+@@ -5077,6 +5090,14 @@
  
      def set_internal_state(self, recv_req: SetInternalStateReq):
          server_args_dict = recv_req.server_args
@@ -194,16 +99,7 @@
          args_allow_update = set(
              [
                  "pp_max_micro_batch_size",
-@@ -5148,7 +5174,7 @@
-                 get_context().override(source="update_server_args", **remaining)
-             logger.info(f"Config updated via context override: {remaining}")
- 
--        return SetInternalStateReqOutput(updated=if_success)
-+        return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
- 
-     def save_remote_model(self, **kwargs):
-         self.weight_updater.save_remote_model(kwargs)
-@@ -5883,6 +5912,10 @@
+@@ -5891,6 +5912,10 @@
  def _make_abort_req(
      req: Req, finished_reason: Optional[FinishReasonDict] = None
  ) -> AbortReq:
@@ -214,13 +110,3 @@
      return AbortReq(
          rid=req.rid,
          finished_reason=finished_reason,
---- a/python/sglang/srt/managers/tokenizer_control_mixin.py
-+++ b/python/sglang/srt/managers/tokenizer_control_mixin.py
-@@ -168,6 +168,7 @@
-                 self._dispatch_to_scheduler,
-                 get_parallel().dp_size,
-                 mode,
-+                correlate=name in ("get_internal_state", "set_internal_state"),
-             )
-             setattr(self, f"{name}_communicator", comm)
-             dispatch_pairs.append((resp_type, comm.handle_recv))
