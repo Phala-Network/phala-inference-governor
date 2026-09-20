@@ -223,6 +223,18 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual((self.manager.set_calls, self.manager.get_calls), (0, 0))
 
+    async def test_huge_integer_reference_is_bad_request_without_policy_mutation(self):
+        self.manager.core.observe(0, 0, 2)
+        self.manager.core.observe(1, 10, 0)
+        before = self.manager.core.snapshot(self.manager.now)
+        body = patch_body(before["epoch"], before["revision"], 10**1000)
+        self.assertLess(len(body), 4096)
+        response = await self.patch({}, body=body)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(document(response), {"error": "invalid_request"})
+        self.assertEqual((self.manager.set_calls, self.manager.get_calls), (0, 0))
+        self.assertEqual(self.manager.core.snapshot(self.manager.now), before)
+
     async def test_patch_rejects_client_disconnect_before_scheduler_dispatch(self):
         response = await self.patch({
             "epoch": "0" * 32, "revision": 1, "reference": 1,

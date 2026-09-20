@@ -22,9 +22,15 @@ class Snapshot(C.Structure):
 
 
 def _finite(value):
-    if type(value) not in (float, int) or not math.isfinite(value) or value < 0:
+    if type(value) not in (float, int):
         raise ValueError("Expected finite nonnegative number")
-    return float(value)
+    try:
+        result = float(value)
+    except OverflowError as error:
+        raise ValueError("Expected finite nonnegative number") from error
+    if not math.isfinite(result) or value < 0:
+        raise ValueError("Expected finite nonnegative number")
+    return result
 
 
 def _integer(value):

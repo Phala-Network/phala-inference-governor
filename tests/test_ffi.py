@@ -50,6 +50,22 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(state["decode_tokens"], 1)
         self.assertFalse(state["individual_tps_binding"])
 
+    def test_unrepresentable_reference_rejected_before_ffi_or_policy_update(self):
+        self.core.observe(0, 0, 1)
+        self.core.observe(1, 7, 0)
+        before = self.core.snapshot(1)
+        for value in (10**1000, -(10**1000)):
+            with self.subTest(value_sign=value > 0):
+                with self.assertRaises(ValueError):
+                    self.core.update_reference(self.core.epoch, before["revision"], value)
+                with self.assertRaises(ValueError):
+                    execute(self.core, "patch", 1, {
+                        "expected_epoch": self.core.epoch,
+                        "expected_revision": before["revision"],
+                        "tps_reference": value,
+                    })
+                self.assertEqual(self.core.snapshot(1), before)
+
 
 if __name__ == "__main__":
     unittest.main()

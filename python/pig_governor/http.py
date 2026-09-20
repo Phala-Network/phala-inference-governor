@@ -1,11 +1,11 @@
 """Thin admin route over SGLang's existing scheduler control transport."""
 import asyncio
 import json
-import math
 import secrets
 from fastapi.responses import JSONResponse
 from sglang.srt.runtime_context import get_serving
 from starlette.requests import ClientDisconnect
+from .core import _finite
 
 CONTROL_TIMEOUT = 5.0
 
@@ -45,8 +45,7 @@ async def endpoint(manager, request):
             if type(patch) is not dict or set(patch) != {"expected_epoch", "expected_revision", "tps_reference"}:
                 raise ValueError("invalid fields")
             value = patch["tps_reference"]
-            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
-                raise ValueError("invalid reference")
+            _finite(value)
             epoch, revision = patch["expected_epoch"], patch["expected_revision"]
             if type(epoch) is not str or len(epoch) != 32 or any(c not in "0123456789abcdef" for c in epoch):
                 raise ValueError("invalid epoch")
