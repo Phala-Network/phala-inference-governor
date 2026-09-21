@@ -4,19 +4,17 @@ on:
   pull_request:
     paths:
       - 'rust/**'
-      - 'python/pig_governor/core.py'
-      - 'python/pig_governor/admin.py'
-      - 'python/pig_governor/__init__.py'
-      - 'tests/test_ffi.py'
+      - 'python/pig_governor/**'
+      - 'patches/**'
+      - 'tests/**'
       - '.github/workflows/core-tests.yml'
   push:
     branches: [main]
     paths:
       - 'rust/**'
-      - 'python/pig_governor/core.py'
-      - 'python/pig_governor/admin.py'
-      - 'python/pig_governor/__init__.py'
-      - 'tests/test_ffi.py'
+      - 'python/pig_governor/**'
+      - 'patches/**'
+      - 'tests/**'
       - '.github/workflows/core-tests.yml'
 
 permissions:
@@ -54,3 +52,32 @@ jobs:
           PIG_GOVERNOR_LIBRARY: ${{ runner.temp }}/pig-governor-target/release/libpig_governor_core.so
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 -m unittest discover -s tests -p test_ffi.py -v
+      - name: Upload Governor library
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governor-library
+          path: ${{ runner.temp }}/pig-governor-target/release/libpig_governor_core.so
+          if-no-files-found: error
+
+  integration-tests:
+    needs: core-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: ghcr.io/phala-network/sglang:v0.5.20-phala-shared-governor-r1@sha256:a5142ca8abe0c73c758eb10e21ca9b843a6da4066191c8a9514ed23a7d4fda21
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: governor-library
+          path: ${{ runner.temp }}
+      - name: Run Python integration tests in the composed SGLang image
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python
+          PIG_GOVERNOR_LIBRARY: ${{ runner.temp }}/libpig_governor_core.so
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m unittest discover -s tests -p test_*.py -v

@@ -11,8 +11,9 @@ Select model compatibility packs explicitly there when needed. Then apply
 This patch touches only three runtime files:
 
 - `http_server.py`: authenticated Governor policy route.
-- `scheduler.py`: explicit enable/create, prefill advice, actual-result/abort
-  accounting, policy snapshot and namespaced policy dispatch.
+- `scheduler.py`: explicit enable/create, pre-grammar-queue TPS admission,
+  prefill advice, batch-level actual-result/abort accounting, policy snapshot
+  and namespaced policy dispatch.
 - `io_struct.py`: allow the namespaced control payload.
 
 General control correlation, diagnostics, auth, lifecycle/worker/schema fixes and

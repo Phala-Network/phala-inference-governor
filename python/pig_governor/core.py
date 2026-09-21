@@ -21,6 +21,23 @@ class Snapshot(C.Structure):
     ]
 
 
+class Admission(C.Structure):
+    _fields_ = [
+        ("abi_version", C.c_uint32),
+        ("allowed", C.c_uint32),
+        ("reason", C.c_uint32),
+        ("observed", C.c_uint32),
+        ("reference", C.c_double),
+        ("conservative_tps", C.c_double),
+        ("projected_tps", C.c_double),
+        ("projected_concurrency", C.c_uint32),
+        ("pressure_class", C.c_uint32),
+        ("evidence_concurrency", C.c_uint32),
+        ("evidence_pressure_class", C.c_uint32),
+        ("active_sequences", C.c_uint64),
+    ]
+
+
 def _finite(value):
     if type(value) not in (float, int):
         raise ValueError("Expected finite nonnegative number")
@@ -39,6 +56,18 @@ def _integer(value):
     return value
 
 
+def _concurrency(value):
+    if type(value) is not int or not 1 <= value < 2**32:
+        raise ValueError("Expected positive 32-bit concurrency")
+    return value
+
+
+def _pressure_class(value):
+    if type(value) is not int or not 0 <= value < 4:
+        raise ValueError("Expected context-pressure class 0..3")
+    return value
+
+
 class Governor:
     """Own one controller handle, never an SGLang Req, tensor, or KV page."""
     def __init__(self, reference, *, library=None):
@@ -54,15 +83,29 @@ class Governor:
             "new": ([C.c_double, C.POINTER(C.c_void_p)], C.c_int32),
             "free": ([C.c_void_p], C.c_int32),
             "observe": ([C.c_void_p, C.c_double, C.c_uint64, C.c_uint64], C.c_int32),
+            "observe_surface": (
+                [C.c_void_p, C.c_double, C.c_uint64, C.c_double,
+                 C.c_uint32, C.c_uint32],
+                C.c_int32,
+            ),
             "prefill": ([C.c_void_p, C.c_double, C.c_double], C.c_int32),
             "update_reference": ([C.c_void_p, C.c_uint64, C.c_double], C.c_int32),
             "snapshot": ([C.c_void_p, C.c_double, C.POINTER(Snapshot)], C.c_int32),
-            "choose": ([C.c_void_p, C.c_double, C.c_uint32, C.c_uint32, C.c_double, C.POINTER(C.c_uint32)], C.c_int32),
+            "admit": (
+                [C.c_void_p, C.c_double, C.c_uint32, C.c_uint32,
+                 C.POINTER(Admission)],
+                C.c_int32,
+            ),
+            "choose": (
+                [C.c_void_p, C.c_double, C.c_uint32, C.c_uint32, C.c_double,
+                 C.POINTER(C.c_uint32)],
+                C.c_int32,
+            ),
         }
         for name, (arguments, result) in definitions.items():
             function = getattr(self._lib, "pig_governor_" + name)
             function.argtypes, function.restype = arguments, result
-        if self._lib.pig_governor_abi_version() != 1:
+        if self._lib.pig_governor_abi_version() != 2:
             raise RuntimeError("Unsupported Governor ABI")
         self._check(self._lib.pig_governor_new(_finite(reference), C.byref(self._handle)))
 
@@ -90,6 +133,17 @@ class Governor:
     def observe(self, now, committed_decode_delta, active_after):
         self._call("observe", _finite(now), _integer(committed_decode_delta), _integer(active_after))
 
+    def observe_surface(self, now, committed_decode_delta, duration,
+                        concurrency, pressure_class):
+        self._call(
+            "observe_surface",
+            _finite(now),
+            _integer(committed_decode_delta),
+            _finite(duration),
+            _concurrency(concurrency),
+            _pressure_class(pressure_class),
+        )
+
     def prefill(self, now, wall):
         self._call("prefill", _finite(now), _finite(wall))
 
@@ -108,14 +162,48 @@ class Governor:
     def snapshot(self, now):
         result = Snapshot()
         self._call("snapshot", _finite(now), C.byref(result))
-        if result.abi_version != 1:
+        if result.abi_version != 2:
             raise RuntimeError("Incompatible snapshot ABI")
         seconds = result.sequence_seconds_60s
         return {
             "epoch": self.epoch, "revision": result.revision,
             "mutable": {"tps_reference": result.reference},
+            "observed": bool(result.observed),
             "average_tps": result.tokens_60s / seconds if seconds > 0 else None,
+            "average_tps_2s": (
+                result.tokens_2s / result.sequence_seconds_2s
+                if result.sequence_seconds_2s > 0
+                else None
+            ),
             "decode_tokens": result.tokens_60s, "decode_sequence_seconds": seconds,
             "active_decode_sequences": result.active_sequences,
             "reference_semantics": "soft_target", "individual_tps_binding": False,
+        }
+
+    def admit(self, now, projected_concurrency, pressure_class):
+        result = Admission()
+        with self._lock:
+            if not self._handle:
+                raise RuntimeError("Controller closed")
+            self._check(self._lib.pig_governor_admit(
+                self._handle,
+                _finite(now),
+                _concurrency(projected_concurrency),
+                _pressure_class(pressure_class),
+                C.byref(result),
+            ))
+        if result.abi_version != 2:
+            raise RuntimeError("Incompatible admission ABI")
+        return {
+            "allowed": bool(result.allowed),
+            "reason": result.reason,
+            "observed": bool(result.observed),
+            "reference": result.reference,
+            "conservative_tps": result.conservative_tps,
+            "projected_tps": result.projected_tps,
+            "projected_concurrency": result.projected_concurrency,
+            "pressure_class": result.pressure_class,
+            "evidence_concurrency": result.evidence_concurrency,
+            "evidence_pressure_class": result.evidence_pressure_class,
+            "active_decode_sequences": result.active_sequences,
         }

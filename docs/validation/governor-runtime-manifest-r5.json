@@ -95,6 +95,7 @@
     "--enable-cache-report",
     "--uvicorn-access-log-exclude-prefixes",
     "/metrics",
+    "/admin/v1/predictive-policy",
     "--disable-overlap-schedule",
     "--cuda-graph-backend-decode",
     "full",
