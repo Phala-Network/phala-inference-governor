@@ -53,8 +53,10 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(heavier["evidence_concurrency"], 4)
         self.assertEqual(heavier["evidence_pressure_class"], 1)
 
-        core.observe_surface(1, 100, 1.0, 1, 0)
-        lighter = core.admit(1, 2, 0)
+        lighter_core = Governor(50)
+        self.addCleanup(lighter_core.close)
+        lighter_core.observe_surface(1, 100, 1.0, 1, 0)
+        lighter = lighter_core.admit(1, 2, 0)
         self.assertFalse(lighter["allowed"])
         self.assertEqual(lighter["reason"], 4)
 
