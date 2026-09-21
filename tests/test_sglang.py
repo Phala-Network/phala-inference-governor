@@ -2,8 +2,66 @@
 import unittest
 from types import SimpleNamespace
 from pig_governor import Governor
+from pig_governor.identity import RESOLVED_RUNTIME_FIELDS, build_runtime_identity
 from pig_governor.sglang import SglangGovernor, create, on_abort_emitted
 from unittest.mock import patch
+
+
+IDENTITY_ENV = {
+    'PIG_ENGINE_COMMIT': '1' * 40,
+    'PIG_GOVERNOR_COMMIT': '2' * 40,
+    'PIG_MODEL_ARTIFACT_ID': 'sha256:' + '3' * 64,
+    'PIG_RUNTIME_HARDWARE_ID': 'h100-sxm-tp1-v1',
+}
+
+
+def resolved_runtime(**changes):
+    values = {
+        'attention_backend': 'fa3',
+        'decode_attention_backend': None,
+        'prefill_attention_backend': None,
+        'chunked_prefill_size': 4096,
+        'context_length': 262144,
+        'cuda_graph_backend_decode': 'auto',
+        'cuda_graph_backend_prefill': 'auto',
+        'disable_cuda_graph': False,
+        'disable_overlap_schedule': True,
+        'disable_radix_cache': False,
+        'disaggregation_mode': 'null',
+        'dp_size': 1,
+        'dtype': 'bfloat16',
+        'enable_dp_attention': False,
+        'enable_torch_compile': False,
+        'kv_cache_dtype': 'bfloat16',
+        'load_format': 'auto',
+        'max_prefill_tokens': 16384,
+        'max_running_requests': 43,
+        'max_total_tokens': 262144,
+        'mem_fraction_static': 0.8,
+        'model_config_parser': 'auto',
+        'model_impl': 'sglang',
+        'page_size': 1,
+        'pp_max_micro_batch_size': 43,
+        'pp_size': 1,
+        'quantization': None,
+        'sampling_backend': 'pytorch',
+        'schedule_policy': 'fcfs',
+        'speculative_accept_threshold_acc': 0.9,
+        'speculative_accept_threshold_single': 1.0,
+        'speculative_algorithm': 'EAGLE',
+        'speculative_draft_attention_backend': None,
+        'speculative_draft_kv_cache_dtype': 'bfloat16',
+        'speculative_eagle_topk': 1,
+        'speculative_num_draft_tokens': 5,
+        'speculative_num_steps': 3,
+        'torch_compile_max_bs': 32,
+        'tp_size': 1,
+        'weight_version': 'default',
+    }
+    values.update(changes)
+    if set(values) != set(RESOLVED_RUNTIME_FIELDS):
+        raise AssertionError('Test runtime identity fields are out of sync')
+    return values
 
 
 class IntegrationTests(unittest.TestCase):
@@ -86,14 +144,76 @@ class IntegrationTests(unittest.TestCase):
         parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
         schedule = SimpleNamespace(disable_overlap_schedule=True, max_running_requests=43)
         disagg = SimpleNamespace(disaggregation_mode='null')
-        with patch.dict('pig_governor.sglang.os.environ', {'PIG_GOVERNOR_ENABLE': '1'}), \
+        context = SimpleNamespace(
+            resolved_server_args_dict=lambda: resolved_runtime()
+        )
+        environment = {
+            **IDENTITY_ENV,
+            'PIG_GOVERNOR_ENABLE': '1',
+            'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
+            'PIG_TPS_REFERENCE': '0',
+        }
+        with patch.dict('pig_governor.sglang.os.environ', environment, clear=True), \
              patch('pig_governor.sglang.get_parallel', return_value=parallel), \
              patch('pig_governor.sglang.get_schedule', return_value=schedule), \
-             patch('pig_governor.sglang.get_disagg', return_value=disagg):
+             patch('pig_governor.sglang.get_disagg', return_value=disagg), \
+             patch('pig_governor.sglang.get_context', return_value=context):
             adapter = create(raw)
         self.addCleanup(adapter.core.close)
         self.assertIsInstance(adapter, SglangGovernor)
         self.assertEqual(adapter.max_running_requests, 43)
+
+    def test_create_prefers_effective_max_running_override(self):
+        parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
+        disagg = SimpleNamespace(disaggregation_mode='null')
+        context = SimpleNamespace(
+            resolved_server_args_dict=lambda: resolved_runtime()
+        )
+        environment = {
+            **IDENTITY_ENV,
+            'PIG_GOVERNOR_ENABLE': '1',
+            'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
+            'PIG_TPS_REFERENCE': '0',
+        }
+        overrides = resolved_runtime(max_running_requests=17)
+        for configured in (None, 43):
+            with self.subTest(configured=configured):
+                schedule = SimpleNamespace(
+                    disable_overlap_schedule=True,
+                    max_running_requests=configured,
+                )
+                with patch.dict('pig_governor.sglang.os.environ', environment, clear=True), \
+                     patch('pig_governor.sglang.get_parallel', return_value=parallel), \
+                     patch('pig_governor.sglang.get_schedule', return_value=schedule), \
+                     patch('pig_governor.sglang.get_disagg', return_value=disagg), \
+                     patch('pig_governor.sglang.get_context', return_value=context):
+                    adapter = create(SimpleNamespace(), runtime_overrides=overrides)
+                self.addCleanup(adapter.core.close)
+                self.assertEqual(adapter.max_running_requests, 17)
+                self.assertEqual(
+                    adapter.runtime_identity['runtime']['max_running_requests'], 17
+                )
+
+    def test_create_with_positive_reference_requires_a_frozen_profile(self):
+        parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
+        schedule = SimpleNamespace(disable_overlap_schedule=True, max_running_requests=43)
+        disagg = SimpleNamespace(disaggregation_mode='null')
+        context = SimpleNamespace(
+            resolved_server_args_dict=lambda: resolved_runtime()
+        )
+        environment = {
+            **IDENTITY_ENV,
+            'PIG_GOVERNOR_ENABLE': '1',
+            'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
+            'PIG_TPS_REFERENCE': '50',
+        }
+        with patch.dict('pig_governor.sglang.os.environ', environment, clear=True), \
+             patch('pig_governor.sglang.get_parallel', return_value=parallel), \
+             patch('pig_governor.sglang.get_schedule', return_value=schedule), \
+             patch('pig_governor.sglang.get_disagg', return_value=disagg), \
+             patch('pig_governor.sglang.get_context', return_value=context):
+            with self.assertRaisesRegex(ValueError, 'PIG_TPS_PROFILE'):
+                create(SimpleNamespace())
 
     def test_create_rejects_resolved_unsupported_topology(self):
         raw = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1,
@@ -108,6 +228,48 @@ class IntegrationTests(unittest.TestCase):
              patch('pig_governor.sglang.get_disagg', return_value=disagg):
             with self.assertRaisesRegex(ValueError, 'TP1/PP1/non-overlap/no disaggregation'):
                 create(raw)
+
+    def test_runtime_identity_change_rotates_epoch_and_clears_surface(self):
+        state = resolved_runtime(weight_version='v0')
+
+        def provider():
+            return build_runtime_identity(state, environ=IDENTITY_ENV)
+
+        core = Governor(0, max_running_requests=43)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(
+            core,
+            max_running_requests=43,
+            runtime_identity=provider(),
+            identity_provider=provider,
+        )
+        core.observe_batch(1, 10, 1.0, 1, 0, 1)
+        old_epoch = core.epoch
+        state['weight_version'] = 'v1'
+        self.assertTrue(adapter.refresh_identity(2))
+        snapshot = core.snapshot(2)
+        self.assertNotEqual(core.epoch, old_epoch)
+        self.assertEqual(snapshot['decode_tokens'], 0)
+        self.assertEqual(snapshot['active_decode_sequences'], 0)
+        self.assertEqual(adapter.surface_epoch_rotations, 1)
+
+    def test_profile_snapshot_is_an_epoch_guarded_loadable_envelope(self):
+        identity = build_runtime_identity(resolved_runtime(), environ=IDENTITY_ENV)
+        core = Governor(0, max_running_requests=43)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(
+            core,
+            max_running_requests=43,
+            runtime_identity=identity,
+            identity_provider=lambda: identity,
+        )
+        core.observe_surface(1, 8, 0.1, 1, 0)
+        exported = adapter.profile_snapshot(1)
+        self.assertEqual(exported['epoch'], core.epoch)
+        self.assertEqual(exported['runtime_identity_sha256'], identity['sha256'])
+        self.assertEqual(exported['profile']['runtime_identity'], identity)
+        self.assertEqual(exported['profile']['cells'][0]['approved_tps'], 80)
+        self.assertEqual(exported['coverage']['count'], 1)
 
 
 if __name__ == '__main__':

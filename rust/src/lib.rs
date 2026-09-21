@@ -1,4 +1,4 @@
-//! Version 2 C ABI. The caller owns pointer validity, output storage and handle
+//! Version 4 C ABI. The caller owns pointer validity, output storage and handle
 //! lifetime; never free a handle during another call. Calls on a live handle
 //! serialize internally. All numeric validation precedes committing state.
 //! Request identity, epoch and exactly-once committed deltas belong to Python.
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 pub const OK: i32 = 0;
 pub const INVALID: i32 = 1;
 pub const CONFLICT: i32 = 2;
@@ -81,6 +81,59 @@ pub struct Admission {
     pub evidence_concurrency: u32,
     pub evidence_pressure_class: u32,
     pub active_sequences: u64,
+}
+
+/// Portable response-surface evidence. Imported cells are conservative priors
+/// with an independent deadline; they never populate the live rolling window.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProfileCellV1 {
+    pub concurrency: u32,
+    pub pressure_class: u32,
+    pub long_tokens: u64,
+    pub long_seconds: f64,
+    pub short_tokens: u64,
+    pub short_seconds: f64,
+    pub approved_lower_tps: f64,
+}
+
+impl ProfileCellV1 {
+    fn key(&self) -> (u32, u32) {
+        (self.concurrency, self.pressure_class)
+    }
+
+    fn validate(&self, max_running_requests: u32) -> Result<()> {
+        if self.concurrency == 0
+            || self.concurrency > max_running_requests
+            || self.pressure_class >= PRESSURE_CLASSES
+            || !nonnegative(self.long_seconds)
+            || !nonnegative(self.short_seconds)
+            || !nonnegative(self.approved_lower_tps)
+            || self.long_seconds < MIN_EXPOSURE_SECONDS
+            || self.short_seconds > self.long_seconds
+            || self.short_tokens > self.long_tokens
+            || (self.short_seconds == 0.0 && self.short_tokens != 0)
+        {
+            return Err(INVALID);
+        }
+        let long_tps = self.long_tokens as f64 / self.long_seconds;
+        let derived_lower = if self.short_seconds > 0.0 {
+            (self.short_tokens as f64 / self.short_seconds).min(long_tps)
+        } else {
+            long_tps
+        };
+        if !derived_lower.is_finite() || self.approved_lower_tps > derived_lower {
+            return Err(INVALID);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SurfaceBound {
+    value: f64,
+    used_live: bool,
+    used_prior: bool,
 }
 
 #[derive(Clone)]
@@ -191,6 +244,8 @@ struct State {
     prefill_wall: f64,
     preference_until: f64,
     surface: BTreeMap<(u32, u32), SurfaceCell>,
+    profile_prior: BTreeMap<(u32, u32), ProfileCellV1>,
+    profile_deadline: Option<f64>,
 }
 
 fn nonnegative(value: f64) -> bool {
@@ -218,7 +273,38 @@ impl State {
             prefill_wall: 0.0,
             preference_until: 0.0,
             surface: BTreeMap::new(),
+            profile_prior: BTreeMap::new(),
+            profile_deadline: None,
         })
+    }
+
+    fn new_with_profile(
+        reference: f64,
+        max_running_requests: u32,
+        now: f64,
+        ttl: f64,
+        cells: &[ProfileCellV1],
+    ) -> Result<Self> {
+        if !nonnegative(now) || now >= MAX_CLOCK || !ttl.is_finite() || ttl <= 0.0 {
+            return Err(INVALID);
+        }
+        let deadline = now + ttl;
+        let max_cells = (max_running_requests as usize)
+            .checked_mul(PRESSURE_CLASSES as usize)
+            .ok_or(INVALID)?;
+        if cells.len() > max_cells || !deadline.is_finite() || deadline >= MAX_CLOCK {
+            return Err(INVALID);
+        }
+        let mut state = Self::new(reference, max_running_requests)?;
+        for cell in cells {
+            cell.validate(max_running_requests)?;
+            if state.profile_prior.insert(cell.key(), *cell).is_some() {
+                return Err(INVALID);
+            }
+        }
+        state.last_time = Some(now);
+        state.profile_deadline = Some(deadline);
+        Ok(state)
     }
 
     fn bucket(&mut self, tick: i64) -> &mut Bucket {
@@ -369,6 +455,105 @@ impl State {
         Ok(())
     }
 
+    fn start_surface_epoch(&mut self, now: f64, active_after: u64) -> Result<()> {
+        if !nonnegative(now) || now >= MAX_CLOCK || active_after > self.max_running_requests as u64
+        {
+            return Err(INVALID);
+        }
+        self.buckets = [EMPTY; BUCKETS];
+        self.last_time = Some(now);
+        self.observed = false;
+        self.active = active_after;
+        self.prefill_end = None;
+        self.prefill_wall = 0.0;
+        self.preference_until = 0.0;
+        self.surface.clear();
+        self.profile_prior.clear();
+        self.profile_deadline = None;
+        Ok(())
+    }
+
+    fn prior_active(&self, now: f64) -> bool {
+        self.profile_deadline.is_some_and(|deadline| now < deadline)
+    }
+
+    fn bound_for_key(&self, now: f64, key: (u32, u32)) -> Result<Option<SurfaceBound>> {
+        let (live, live_qualified) = match self.surface.get(&key) {
+            Some(cell) => (cell.lower_bound(now)?, cell.qualified(now)?),
+            None => (None, false),
+        };
+        let prior = if self.prior_active(now) {
+            self.profile_prior
+                .get(&key)
+                .map(|cell| cell.approved_lower_tps)
+        } else {
+            None
+        };
+        Ok(match (live, prior) {
+            (Some(live), Some(prior)) if live < prior => Some(SurfaceBound {
+                value: live,
+                used_live: true,
+                used_prior: false,
+            }),
+            (Some(_), Some(prior)) => Some(SurfaceBound {
+                value: prior,
+                used_live: live_qualified,
+                used_prior: true,
+            }),
+            (Some(live), None) if live_qualified => Some(SurfaceBound {
+                value: live,
+                used_live: true,
+                used_prior: false,
+            }),
+            (None, Some(prior)) => Some(SurfaceBound {
+                value: prior,
+                used_live: false,
+                used_prior: true,
+            }),
+            (None, None) => None,
+            (Some(_), None) => None,
+        })
+    }
+
+    fn has_qualified_live(&self, now: f64) -> Result<bool> {
+        for cell in self.surface.values() {
+            if cell.qualified(now)? && cell.lower_bound(now)?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn export_profile(&mut self, now: f64, capacity: usize) -> Result<Vec<ProfileCellV1>> {
+        let mut next = self.clone();
+        next.advance(now)?;
+        let mut cells = Vec::new();
+        for (&(concurrency, pressure_class), cell) in &next.surface {
+            if !cell.qualified(now)? {
+                continue;
+            }
+            let (long_tokens, long_seconds) = cell.evidence(now, WINDOW_SECONDS)?;
+            let (short_tokens, short_seconds) = cell.evidence(now, SHORT_WINDOW_SECONDS)?;
+            let Some(approved_lower_tps) = cell.lower_bound(now)? else {
+                continue;
+            };
+            cells.push(ProfileCellV1 {
+                concurrency,
+                pressure_class,
+                long_tokens,
+                long_seconds,
+                short_tokens,
+                short_seconds,
+                approved_lower_tps,
+            });
+        }
+        if cells.len() > capacity {
+            return Err(INVALID);
+        }
+        *self = next;
+        Ok(cells)
+    }
+
     fn snapshot(&mut self, now: f64) -> Result<Snapshot> {
         self.advance(now)?;
         let (tokens_60s, sequence_seconds_60s) = self.evidence(now, WINDOW_SECONDS)?;
@@ -403,7 +588,7 @@ impl State {
         }
         self.advance(now)?;
         let reference = self.reference;
-        let observed = u32::from(!self.surface.is_empty());
+        let observed = u32::from(self.has_qualified_live(now)?);
         if reference == 0.0 {
             return Ok(Admission {
                 abi_version: ABI_VERSION,
@@ -422,29 +607,29 @@ impl State {
         }
 
         let exact_key = (projected_concurrency, pressure_class);
-        let mut selected: Option<((u32, u32), f64)> = None;
-
-        if let Some(cell) = self.surface.get(&exact_key) {
-            if cell.qualified(now)? {
-                if let Some(bound) = cell.lower_bound(now)? {
-                    selected = Some((exact_key, bound));
-                }
-            }
-        }
+        let mut selected = self
+            .bound_for_key(now, exact_key)?
+            .map(|bound| (exact_key, bound));
 
         if selected.is_none() {
-            for (&key, cell) in self.surface.iter() {
+            let mut keys = BTreeMap::new();
+            for &key in self.surface.keys() {
+                keys.insert(key, ());
+            }
+            if self.prior_active(now) {
+                for &key in self.profile_prior.keys() {
+                    keys.insert(key, ());
+                }
+            }
+            for (&key, ()) in &keys {
                 if key.0 < projected_concurrency || key.1 < pressure_class {
                     continue;
                 }
-                if !cell.qualified(now)? {
-                    continue;
-                }
-                let Some(bound) = cell.lower_bound(now)? else {
+                let Some(bound) = self.bound_for_key(now, key)? else {
                     continue;
                 };
                 let replace = match selected {
-                    Some((_, best_bound)) => bound < best_bound,
+                    Some((_, best_bound)) => bound.value < best_bound.value,
                     None => true,
                 };
                 if replace {
@@ -455,19 +640,23 @@ impl State {
 
         match selected {
             Some(((evidence_concurrency, evidence_pressure), bound)) => {
-                let allowed = bound >= reference;
+                let allowed = bound.value >= reference;
                 Ok(Admission {
                     abi_version: ABI_VERSION,
                     allowed: u32::from(allowed),
                     reason: if allowed {
-                        ADMISSION_FIT
+                        if bound.used_prior && !bound.used_live {
+                            ADMISSION_COLD_PRIOR
+                        } else {
+                            ADMISSION_FIT
+                        }
                     } else {
                         ADMISSION_TPS_RISK
                     },
-                    observed,
+                    observed: u32::from(bound.used_live),
                     reference,
-                    conservative_tps: bound,
-                    projected_tps: bound,
+                    conservative_tps: bound.value,
+                    projected_tps: bound.value,
                     projected_concurrency,
                     pressure_class,
                     evidence_concurrency,
@@ -479,7 +668,7 @@ impl State {
                 abi_version: ABI_VERSION,
                 allowed: 0,
                 reason: ADMISSION_UNKNOWN,
-                observed,
+                observed: 0,
                 reference,
                 conservative_tps: 0.0,
                 projected_tps: 0.0,
@@ -580,6 +769,39 @@ pub unsafe extern "C" fn pig_governor_new(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn pig_governor_new_with_profile(
+    reference: f64,
+    max_running_requests: u32,
+    now: f64,
+    ttl: f64,
+    cells: *const ProfileCellV1,
+    count: u32,
+    out: *mut *mut Governor,
+) -> i32 {
+    guarded(|| {
+        if out.is_null() || (count == 0) != cells.is_null() {
+            return Err(INVALID);
+        }
+        let max_cells = (max_running_requests as usize)
+            .checked_mul(PRESSURE_CLASSES as usize)
+            .ok_or(INVALID)?;
+        if count as usize > max_cells {
+            return Err(INVALID);
+        }
+        let cells = if count == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(cells, count as usize)
+        };
+        let state = State::new_with_profile(reference, max_running_requests, now, ttl, cells)?;
+        *out = Box::into_raw(Box::new(Governor {
+            state: Mutex::new(state),
+        }));
+        Ok(())
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn pig_governor_free(handle: *mut Governor) -> i32 {
     guarded(|| {
         if handle.is_null() {
@@ -655,6 +877,34 @@ pub unsafe extern "C" fn pig_governor_update_reference(
         transaction(handle, |state| {
             state.update_reference(expected_revision, reference)
         })
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pig_governor_start_surface_epoch(
+    handle: *mut Governor,
+    now: f64,
+    active_after: u64,
+) -> i32 {
+    guarded(|| transaction(handle, |state| state.start_surface_epoch(now, active_after)))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pig_governor_export_profile(
+    handle: *mut Governor,
+    now: f64,
+    buffer: *mut ProfileCellV1,
+    capacity: u32,
+    out_count: *mut u32,
+) -> i32 {
+    guarded(|| {
+        if buffer.is_null() || out_count.is_null() {
+            return Err(INVALID);
+        }
+        let cells = transaction(handle, |state| state.export_profile(now, capacity as usize))?;
+        std::ptr::copy_nonoverlapping(cells.as_ptr(), buffer, cells.len());
+        *out_count = cells.len() as u32;
+        Ok(())
     })
 }
 
@@ -907,6 +1157,156 @@ mod tests {
         assert_eq!(admission.reason, ADMISSION_UNKNOWN);
     }
 
+    fn profile_cell(concurrency: u32, pressure_class: u32, lower: f64) -> ProfileCellV1 {
+        ProfileCellV1 {
+            concurrency,
+            pressure_class,
+            long_tokens: 100,
+            long_seconds: 1.0,
+            short_tokens: 100,
+            short_seconds: 1.0,
+            approved_lower_tps: lower,
+        }
+    }
+
+    #[test]
+    fn profile_exact_precedes_heavier_and_live_can_lower_it() {
+        let cells = [profile_cell(1, 0, 80.0), profile_cell(4, 1, 20.0)];
+        let mut s = State::new_with_profile(50.0, 4, 1.0, 10.0, &cells).unwrap();
+
+        let exact = s.admission(1.0, 1, 0).unwrap();
+        assert_eq!(exact.allowed, 1);
+        assert_eq!(exact.reason, ADMISSION_COLD_PRIOR);
+        assert_eq!(exact.observed, 0);
+        assert_eq!(exact.evidence_concurrency, 1);
+        assert_eq!(exact.projected_tps, 80.0);
+
+        s.observe_surface(1.05, 10, 0.01, 2, 0).unwrap();
+        let unrelated = s.admission(1.05, 1, 0).unwrap();
+        assert_eq!(unrelated.reason, ADMISSION_COLD_PRIOR);
+        assert_eq!(unrelated.observed, 0);
+        assert_eq!(unrelated.projected_tps, 80.0);
+
+        s.observe_surface(1.1, 0, 0.01, 1, 0).unwrap();
+        let lowered = s.admission(1.1, 1, 0).unwrap();
+        assert_eq!(lowered.allowed, 0);
+        assert_eq!(lowered.reason, ADMISSION_TPS_RISK);
+        assert_eq!(lowered.observed, 1);
+        assert_eq!(lowered.projected_tps, 0.0);
+        assert_eq!(lowered.evidence_concurrency, 1);
+    }
+
+    #[test]
+    fn unqualified_high_live_cannot_relax_prior_but_qualified_live_is_provenance() {
+        let cells = [profile_cell(1, 0, 80.0)];
+        let mut s = State::new_with_profile(50.0, 4, 1.0, 10.0, &cells).unwrap();
+        s.observe_surface(1.01, 50, 0.05, 1, 0).unwrap();
+        let unqualified = s.admission(1.01, 1, 0).unwrap();
+        assert_eq!(unqualified.reason, ADMISSION_COLD_PRIOR);
+        assert_eq!(unqualified.observed, 0);
+        assert_eq!(unqualified.projected_tps, 80.0);
+
+        s.observe_surface(1.1, 50, 0.05, 1, 0).unwrap();
+        let qualified = s.admission(1.1, 1, 0).unwrap();
+        assert_eq!(qualified.reason, ADMISSION_FIT);
+        assert_eq!(qualified.observed, 1);
+        assert_eq!(qualified.projected_tps, 80.0);
+
+        let expired = s.admission(11.0, 1, 0).unwrap();
+        assert_eq!(expired.reason, ADMISSION_FIT);
+        assert_eq!(expired.observed, 1);
+        assert_eq!(expired.projected_tps, 1000.0);
+    }
+
+    #[test]
+    fn profile_heavier_fallback_is_most_conservative_and_expires() {
+        let cells = [profile_cell(2, 0, 70.0), profile_cell(4, 1, 30.0)];
+        let mut s = State::new_with_profile(50.0, 4, 1.0, 2.0, &cells).unwrap();
+        let fallback = s.admission(1.0, 1, 0).unwrap();
+        assert_eq!(fallback.allowed, 0);
+        assert_eq!(fallback.projected_tps, 30.0);
+        assert_eq!(fallback.evidence_concurrency, 4);
+        assert_eq!(fallback.evidence_pressure_class, 1);
+
+        assert_eq!(s.admission(2.999, 1, 0).unwrap().projected_tps, 30.0);
+        let expired = s.admission(3.0, 1, 0).unwrap();
+        assert_eq!(expired.reason, ADMISSION_UNKNOWN);
+        assert_eq!(expired.observed, 0);
+    }
+
+    #[test]
+    fn reference_zero_and_cas_preserve_profile_prior() {
+        let cells = [profile_cell(1, 0, 80.0)];
+        let mut s = State::new_with_profile(0.0, 4, 1.0, 10.0, &cells).unwrap();
+        assert_eq!(
+            s.admission(1.0, 1, 0).unwrap().reason,
+            ADMISSION_REFERENCE_DISABLED
+        );
+        assert_eq!(s.update_reference(9, 50.0), Err(CONFLICT));
+        s.update_reference(1, 50.0).unwrap();
+        let admission = s.admission(1.0, 1, 0).unwrap();
+        assert_eq!(admission.allowed, 1);
+        assert_eq!(admission.projected_tps, 80.0);
+    }
+
+    #[test]
+    fn invalid_profile_evidence_is_rejected_atomically() {
+        let valid = profile_cell(1, 0, 80.0);
+        let duplicate = [valid, valid];
+        assert!(State::new_with_profile(50.0, 4, 1.0, 10.0, &duplicate).is_err());
+
+        let mut invalid = valid;
+        invalid.short_tokens = 101;
+        assert!(State::new_with_profile(50.0, 4, 1.0, 10.0, &[invalid]).is_err());
+        invalid = valid;
+        invalid.long_seconds = 0.09;
+        assert!(State::new_with_profile(50.0, 4, 1.0, 10.0, &[invalid]).is_err());
+        invalid = valid;
+        invalid.approved_lower_tps = 100.1;
+        assert!(State::new_with_profile(50.0, 4, 1.0, 10.0, &[invalid]).is_err());
+        assert!(State::new_with_profile(50.0, 4, 1.0, 0.0, &[valid]).is_err());
+    }
+
+    #[test]
+    fn surface_epoch_reset_preserves_policy_and_clears_all_evidence() {
+        let cells = [profile_cell(1, 0, 80.0)];
+        let mut s = State::new_with_profile(50.0, 4, 10.0, 10.0, &cells).unwrap();
+        s.update_reference(1, 60.0).unwrap();
+        s.observe_batch(11.0, 100, 1.0, 1, 0, 1).unwrap();
+        s.prefill(11.0, 0.5).unwrap();
+
+        assert_eq!(s.start_surface_epoch(2.0, 5), Err(INVALID));
+        assert_eq!(s.snapshot(11.0).unwrap().tokens_60s, 100);
+        s.start_surface_epoch(2.0, 3).unwrap();
+        let snapshot = s.snapshot(2.0).unwrap();
+        assert_eq!(snapshot.reference, 60.0);
+        assert_eq!(snapshot.revision, 2);
+        assert_eq!(snapshot.tokens_60s, 0);
+        assert_eq!(snapshot.active_sequences, 3);
+        assert_eq!(snapshot.last_prefill_end, -1.0);
+        assert!(s.surface.is_empty());
+        assert!(s.profile_prior.is_empty());
+        assert_eq!(s.admission(2.0, 1, 0).unwrap().reason, ADMISSION_UNKNOWN);
+    }
+
+    #[test]
+    fn export_contains_only_qualified_live_evidence() {
+        let cells = [profile_cell(2, 0, 20.0)];
+        let mut s = State::new_with_profile(50.0, 4, 1.0, 10.0, &cells).unwrap();
+        assert!(s.export_profile(1.0, 16).unwrap().is_empty());
+        s.observe_surface(1.0, 40, 1.0, 1, 0).unwrap();
+        let exported = s.export_profile(1.0, 16).unwrap();
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].concurrency, 1);
+        assert_eq!(exported[0].long_tokens, 40);
+        assert_eq!(exported[0].approved_lower_tps, 40.0);
+
+        let before = s.clone();
+        assert_eq!(s.export_profile(2.0, 0), Err(INVALID));
+        assert_eq!(s.last_time, before.last_time);
+        assert_eq!(s.active, before.active);
+    }
+
     #[test]
     fn preference_is_short_ages_and_never_reanchors_to_evaluation() {
         let mut s = State::new(100.0, 4).unwrap();
@@ -970,10 +1370,108 @@ mod tests {
     }
 
     #[test]
+    fn ffi_profile_creation_is_all_or_nothing() {
+        assert_eq!(std::mem::size_of::<ProfileCellV1>(), 48);
+        unsafe {
+            let cell = profile_cell(1, 0, 80.0);
+            let mut untouched = 1usize as *mut Governor;
+            assert_eq!(
+                pig_governor_new_with_profile(
+                    50.0,
+                    4,
+                    0.0,
+                    10.0,
+                    std::ptr::null(),
+                    1,
+                    &mut untouched,
+                ),
+                INVALID
+            );
+            assert_eq!(untouched, 1usize as *mut Governor);
+            assert_eq!(
+                pig_governor_new_with_profile(50.0, 4, 0.0, 10.0, &cell, 0, &mut untouched),
+                INVALID
+            );
+            assert_eq!(
+                pig_governor_new_with_profile(50.0, 1, 0.0, 10.0, &cell, 5, &mut untouched),
+                INVALID
+            );
+            assert_eq!(untouched, 1usize as *mut Governor);
+
+            let mut empty = std::ptr::null_mut();
+            assert_eq!(
+                pig_governor_new_with_profile(50.0, 4, 0.0, 10.0, std::ptr::null(), 0, &mut empty,),
+                OK
+            );
+            assert_eq!(pig_governor_free(empty), OK);
+
+            let duplicate = [cell, cell];
+            let mut h = std::ptr::null_mut();
+            assert_eq!(
+                pig_governor_new_with_profile(
+                    50.0,
+                    4,
+                    0.0,
+                    10.0,
+                    duplicate.as_ptr(),
+                    duplicate.len() as u32,
+                    &mut h,
+                ),
+                INVALID
+            );
+            assert!(h.is_null());
+            assert_eq!(
+                pig_governor_new_with_profile(50.0, 4, 0.0, 10.0, &cell, 1, &mut h),
+                OK
+            );
+            let mut admission = Admission::default();
+            assert_eq!(pig_governor_admit(h, 0.0, 1, 0, &mut admission), OK);
+            assert_eq!(admission.projected_tps, 80.0);
+            assert_eq!(pig_governor_free(h), OK);
+        }
+    }
+
+    #[test]
+    fn ffi_export_failure_preserves_output_and_clock() {
+        unsafe {
+            let mut h = std::ptr::null_mut();
+            assert_eq!(pig_governor_new(50.0, 4, &mut h), OK);
+            assert_eq!(pig_governor_observe_surface(h, 1.0, 40, 1.0, 1, 0), OK);
+            let mut cell = profile_cell(99, 3, 7.0);
+            let mut count = 77;
+            assert_eq!(
+                pig_governor_export_profile(h, 2.0, &mut cell, 0, &mut count),
+                INVALID
+            );
+            assert_eq!(cell.concurrency, 99);
+            assert_eq!(count, 77);
+            assert_eq!(pig_governor_observe_surface(h, 1.5, 4, 0.1, 1, 0), OK);
+            assert_eq!(
+                pig_governor_export_profile(h, 1.5, std::ptr::null_mut(), 1, &mut count),
+                INVALID
+            );
+            assert_eq!(
+                pig_governor_export_profile(h, 1.5, &mut cell, 1, std::ptr::null_mut()),
+                INVALID
+            );
+            assert_eq!(cell.concurrency, 99);
+            assert_eq!(count, 77);
+            assert_eq!(
+                pig_governor_export_profile(h, 1.5, &mut cell, 1, &mut count),
+                OK
+            );
+            assert_eq!(count, 1);
+            assert_eq!(cell.concurrency, 1);
+            assert_eq!(cell.long_tokens, 44);
+            assert_eq!(pig_governor_free(h), OK);
+        }
+    }
+
+    #[test]
     fn abi_rejects_nulls_and_bad_creation_without_touching_outputs() {
         unsafe {
             let mut h = std::ptr::null_mut();
-            assert_eq!(pig_governor_abi_version(), 3);
+            assert_eq!(pig_governor_abi_version(), 4);
             assert_eq!(pig_governor_new(-1.0, 4, &mut h), INVALID);
             assert_eq!(pig_governor_new(30.0, 0, &mut h), INVALID);
             assert!(h.is_null());

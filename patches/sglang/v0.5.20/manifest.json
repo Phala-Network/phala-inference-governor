@@ -1,9 +1,23 @@
 {
-  "schema": "phala.governor-hooks.v1",
-  "upstream": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+  "schema": "phala.governor-hooks.v2",
+  "upstream": {
+    "repository": "https://github.com/sgl-project/sglang",
+    "tag": "v0.5.20",
+    "commit": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e"
+  },
   "requires": {
-    "common_patch_sha256": "5d4d3db08a006c9957dd18641260d3ca5f315e2cac5a45229c73dc2f71ab68b6",
-    "repository": "https://github.com/Phala-Network/sglang-serving-patches"
+    "serving_patch_repository": "https://github.com/Phala-Network/sglang-serving-patches",
+    "engine_parent": {
+      "repository": "https://github.com/Phala-Network/sglang",
+      "commit": "5871a82cb0ef1221126b8c9712881e497041bd38",
+      "tree": "b0b36fb1d0b46410a6bd8c721ddb163237cc1be9"
+    },
+    "ordering": "Apply after the ordered serving stack, including the common pre-header HTTP error propagation step."
+  },
+  "component": {
+    "repository": "https://github.com/Phala-Network/phala-inference-governor",
+    "version": "0.2.0",
+    "abi_version": 4
   },
   "patches": [
     {
@@ -13,13 +27,34 @@
         "python/sglang/srt/managers/io_struct.py",
         "python/sglang/srt/managers/scheduler.py"
       ],
-      "sha256": "ded58601757c2c68569f49e4204d1d9fbff38b8056cd710416b1fa12359a92f2"
+      "sha256": "ad06b65add7441d7875ea78ab129830edab720c4b9ce7519236ae7aaefdede15",
+      "source": {
+        "repository": "https://github.com/Phala-Network/sglang",
+        "parent": "5871a82cb0ef1221126b8c9712881e497041bd38",
+        "commit": "a43a9d30eb9879ec54c607d1d2edfdb5c536bb07",
+        "tree": "0dacab8ac525e59aa02875bfd83c1157637a4bc9"
+      }
     }
   ],
-  "model_patches_required": false,
-  "historical_source_commit": "b24dbadb3a8a9a1c701bb8cac12bd7648a0bb157",
+  "historical": {
+    "v3": {
+      "record": "../../../docs/V3_FROZEN_PROVENANCE.md",
+      "manifest": "history/v3/manifest.json",
+      "patch": "history/v3/0001-governor-hooks.patch",
+      "governor_commit": "47f31552dcddac424f8c860e75d5f9c280fc98d9",
+      "governor_tree": "b08ef1df0d04e47f8abe8f6c6b595d06eba216c8",
+      "hook_sha256": "ded58601757c2c68569f49e4204d1d9fbff38b8056cd710416b1fa12359a92f2"
+    }
+  },
   "validation": {
-    "patch_reproduction": "../../../docs/validation/split-reproduction-r1.json",
-    "execution_regressions": "common without Governor and selected model groups passed; Governor failed hardcoded test path corrected, targeted rerun passed; final image pending"
+    "date": "2026-09-21",
+    "rust_unit_tests": 28,
+    "python_unittest_tests": 107,
+    "native_sglang_common_tests": 10,
+    "component_contract_abi": 4,
+    "clean_replay": true,
+    "gpu_acceptance": false,
+    "image_acceptance": false,
+    "production_acceptance": false
   }
 }

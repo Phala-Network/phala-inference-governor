@@ -17,10 +17,12 @@ PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代
 ## 2026-09-20 统一补丁栈修订（优先于历史状态）
 
 本日最新执行优先项：统一真实 SGLang 源码、少量必要构建配置和完整版本交付是主线。
-补丁仓库不再是人工维护/发布的必经层；需要客户 diff 时从完整源码自动导出可选附件，
-不双份维护、不加额外 PR/profile gate，不推进独立补丁 CI/发布框架。已有仓库、
-冻结输入和有效来源/回归证据保留。下列五步/manifest 描述作为本日较早阶段记录，
-遇到冲突以本段为准；源码正确性、必要验证和镜像标准不变。
+`sglang-serving-patches` 维护同一上游版本的一份统一有序补丁栈，Governor 仓库发布
+组件源码和最小 hooks，`Phala-Network/sglang` 在固定官方基线上组合二者并记录完整
+源码 commit/tree，`phala-models-compose` 只消费固定完整源码和不可变镜像身份。
+不双份维护实现，不为每个模型复制完整 patch 系统，也不增加每 patch 必须独立 PR 的
+审批门槛。已有仓库、冻结输入和有效来源/回归证据保留；下列五步和 manifest 是当前
+发布规范，历史段落不得覆盖它们。
 
 - 五步链路：共享通用补丁 → 同集合模型专属补丁 → Governor 最小 hooks/组件 → 固定官方基线上的完整 SGLang 源码分支 → 标准不可变镜像。
 - serving-patches 是同一上游版本的一份有序补丁集合；模型目录只标职责，专属逻辑按模块/模型/配置启用。取消每模型复制 common/profile/CI 与每补丁必须人工 PR 审批的规则；确有依赖互斥才保留必要变体。
@@ -29,6 +31,8 @@ PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代
 - 组合镜像仅发布 ghcr.io/phala-network/sglang，OCI source 为 Phala-Network/sglang、revision 为完整引擎 commit。不覆盖旧 tag、历史镜像或证据，不 force-push main。
 - 公共清单、校验器、完整发布分支由本任务统一整合；模型任务提交增量和证据。GitHub 继承 workflow 启停/旧 PR 行政收尾由流程管理任务单独负责，避免并发改状态。
 - 当前冻结候选：serving 9b6580d、Governor bcc37a3(0.1.1)、engine 828500b/tree 0d159027。源码红绿及受影响回归保留；prepare/runner 22项测试和实际完整tree验证已通过，真实镜像未构建。冻结输入不因本次流程调整作废。
+- v3 冻结 provenance 的 Governor main commit、tree 和 hook SHA256 原样记录在 [`V3_FROZEN_PROVENANCE.md`](V3_FROZEN_PROVENANCE.md)；v4 只能新增发布身份，不得覆盖该记录。
+- 2026-09-21 incident-repair 候选为 Governor 0.2.0 / C ABI v4：正 reference 启动必须加载与完整 runtime identity 匹配、未过期、hash 固定且 coverage 完整的 response-surface profile；reference 0 可无 profile 离线采集。该候选尚未替代上一条历史冻结证据，必须完成 Linux、GPU、组合镜像与 C2 验收后才可发布。
 - 整合次序：先将现有20项选择收敛为单一有序manifest并证明tree等价，再接入GLM/DS/Kimi增量；v0.5.19多模型历史逐项审查重叠、上游覆盖与XGrammar依赖，不盲目叠加。需要修改行为时补受影响回归，不重跑无关GPU实验。
 - 标准builder可用64.4GB；实测历史同基线压缩层15.1GB、解压tar36.6GB、OCI15.1GB，尚不足覆盖保守全新构建峰值。保留旧OCI，容量解决前不启动大构建。
 - 源码/CI/镜像/部署分别记录。e4尚未部署；部署授权仍仅e4，不扩大CVM或路由范围。平均TPS软目标和鉴权热更新合同不变。
@@ -39,6 +43,7 @@ PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代
 
 - 平均 TPS 是软参考，允许上下波动；无逐请求/逐窗口 TPS 硬门槛，不新增排队或 TTFT 硬拒绝。
 - 外部鉴权 `GET/PATCH /admin/v1/predictive-policy` 保留 `tps_reference`、epoch/revision CAS；热修改不重启模型、不清空真实历史。
+- 外部鉴权 `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` 导出不可缓存的严格 envelope；identity 或 runtime 变化清空 prior/live surface 并旋转 epoch，旧 profile 不得放宽新身份。
 - Rust 核只处理真实 Decode tokens/序列秒数和有界调度建议；不拥有 Req、KV/cache、tensor、ACK 或资源释放权，不把预测 token 写入实测窗口。
 - Python 接入复用原生生命周期、控制 IPC；worker 同步、真实分配和取消清理由 SGLang 原生路径拥有。
 - TAIL 的信任/TEE 边界保持独立；旧全预测、日志、资格门等实验实现不机械迁入 Rust。原 A–F 中仍有意义的性能、资源与可信链验证继续保留，不能用旧测试数量替代新架构验收。

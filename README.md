@@ -19,12 +19,17 @@ Use the complete shared engine source in
 lifecycle, auth/diagnostic, worker, schema and model compatibility repairs.
 Governor owns its component and [minimal integration hooks](patches/sglang/v0.5.20/README.md).
 [sglang-serving-patches](https://github.com/Phala-Network/sglang-serving-patches)
-is an optional deterministic export of the complete source, not a separately
-maintained implementation or a required release step. Model-specific code
-activates only in its relevant module/model/configuration. Preserve frozen
-historical inputs and evidence while integrating new changes in the shared source.
-Deployment build configuration pins the complete engine and Governor commits. Combined runtime images
-are published to `ghcr.io/phala-network/sglang`, associated with
+maintains the single ordered patch stack for general and model-specific serving
+changes. Governor publishes its component source and minimal hook patch. The
+ordered stack and Governor input are composed on the fixed upstream baseline in
+[Phala-Network/sglang](https://github.com/Phala-Network/sglang) as one complete
+engine source commit and tree. Model-specific code activates only in its relevant
+module, model or configuration; do not create a complete patch system per model
+or require one PR per patch. Preserve frozen historical inputs and evidence while
+integrating new changes in the shared source. Deployment configuration in
+phala-models-compose consumes fixed complete-source and image identities; it does
+not replace the source composition steps. Combined runtime images are published
+to `ghcr.io/phala-network/sglang`, associated with
 [Phala-Network/sglang](https://github.com/Phala-Network/sglang); this repository
 publishes the Governor component and hooks, not SGLang runtime images.
 
@@ -34,13 +39,28 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Runtime configuration:
+Component `0.2.0` uses C ABI v4. Production runtime configuration binds a
+frozen response-surface profile to the exact composed engine, Governor source,
+model artifact, hardware class and resolved SGLang settings:
 
 ```text
 PIG_GOVERNOR_ENABLE=1
 PIG_GOVERNOR_LIBRARY=/absolute/image/path/libpig_governor_core.so
 PIG_TPS_REFERENCE=50
+PIG_TPS_PROFILE_PATH=/absolute/image/path/qwen3.8-27b-profile.json
+PIG_TPS_PROFILE_SHA256=<64 lowercase hex characters>
+PIG_ENGINE_COMMIT=<40 lowercase hex characters>
+PIG_GOVERNOR_COMMIT=<40 lowercase hex characters>
+PIG_MODEL_ARTIFACT_ID=sha256:<64 lowercase hex characters>
+PIG_RUNTIME_HARDWARE_ID=h200-sxm-tp1-v1
 ```
+
+With a positive reference, both profile variables are required and the profile
+must be unexpired, identity-matched and cover every reachable response-surface
+cell through exact or jointly-heavier evidence. `PIG_TPS_REFERENCE=0` is the
+explicit offline sampling mode and may start without a profile. Runtime/model
+identity changes clear prior and live evidence, rotate the CAS epoch and fail
+closed until fresh qualified evidence exists.
 
 Production uses the official `sglang serve` command. With the supplied auth patch,
 `PIG_AUTH_FROM_TOKEN=1` reads the existing deployment `TOKEN` for both API and
@@ -56,6 +76,20 @@ A successful hot update neither restarts the model nor resets actual history.
 `tps_reference=0` is the explicit C2 offline sampling mode; a CAS update from 0
 to the production reference preserves the learned response surface.
 
+Authenticated `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` exports
+one epoch-guarded, non-cacheable envelope containing the exact runtime identity,
+coverage report and a loadable profile document. Persist the nested `profile`
+document as canonical JSON, review it, hash the exact bytes and configure that
+path/hash for the production restart. A stale epoch returns 409; malformed or
+multi-rank state fails closed with 503.
+
+Production launchers should suppress the polling endpoints from Uvicorn access
+logs together with metrics:
+
+```text
+--uvicorn-access-log-exclude-prefixes /metrics /admin/v1/predictive-policy /admin/v1/predictive-profile
+```
+
 Admission is TPS-first and occurs before SGLang's grammar or ordinary waiting
 queue. It forecasts the candidate's projected `(Decode concurrency, context
 pressure)` cell from measured per-user Decode evidence, and returns HTTP 429 when
@@ -66,12 +100,17 @@ ctypes from a prebuilt library, without runtime Cargo builds.
 
 ## Validation and release status
 
-The split patch composition passes application and Python AST checks for six
-common/model/Governor selections. The complete Qwen combination reproduces all
-59 historical source/test files exactly. Common and selected model CPU regressions now pass; composed-image
-verification remains pending; the previous mixed-source v0.1.0 image is historical
-and is not a new deployment candidate. The minimal Governor patch changes only
-three runtime files.
+The split patch composition and prior CPU evidence remain historical provenance.
+The exact v3 commit, tree and hook digest are retained in
+[the frozen v3 provenance record](docs/V3_FROZEN_PROVENANCE.md) and must not be
+rewritten by the v4 release.
+The ABI v4 incident-repair candidate adds frozen profile bootstrap, exact runtime
+identity, profile export and pre-enqueue TPS admission. Its deterministic hook
+patch, clean replay, Linux Rust/FFI/SGLang suite and native pre-header HTTP error
+regression passed on September 21, 2026; see the
+[Linux validation record](docs/validation/governor-v4-linux-r1.json). Composed
+image, GPU and authorized C2 validation remain pending. The previous mixed-source
+v0.1.0 image is historical and is not a deployment candidate.
 
 Historical validation includes real SGLang lifecycle, HTTP/CAS/auth, cancellation,
 parallel sampling and queue-time regressions. The affected auth/lifecycle suite
@@ -87,10 +126,10 @@ See [development acceptance](docs/validation/DEV_V0520_ACCEPTANCE.md) for exact
 runtime identity, retained failed probes and evidence boundaries. Strict dynamic
 platform policy failed; launch/model measurement coverage remains unproven.
 Final-image verification, reproducible image publication and the authorized
-production test remain pending. Package version 0.1.1 identifies this source;
-it is not a claim that those release gates have already passed.
-Version 0.1.1 identifies the split Governor component with standalone core CI;
-historical v0.1.0 tags and mixed-source image evidence remain unchanged.
+production test remain pending. Package version 0.2.0 identifies the ABI v4
+source candidate; it is not a claim that those release gates have passed.
+Historical v0.1.0 tags, the 0.1.1 source state and mixed-source image evidence
+remain unchanged.
 
 [Execution plan](docs/PIG_SGLANG_NATIVE_QOS_DESIGN.md) ·
 [Upgrade assessment](docs/SGLANG_V0520_ASSESSMENT.md) ·

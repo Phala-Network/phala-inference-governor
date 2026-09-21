@@ -6,6 +6,7 @@ same admin operation that the scheduler owner would execute, without starting
 a server, GPU worker, or network listener.
 """
 import asyncio
+import copy
 import json
 import unittest
 from types import SimpleNamespace
@@ -16,21 +17,25 @@ from starlette.requests import Request
 from pig_governor import Governor, RevisionConflict
 from pig_governor.admin import execute
 from pig_governor import http
+from pig_governor.identity import build_runtime_identity
+from pig_governor.profile import build_profile_document, coverage
 from sglang.srt.managers.io_struct import SetInternalStateReq
 
 
 def request(method, *, body=b"", authorization="Bearer admin", content_type=None,
-            chunks=None, disconnect=False):
+            chunks=None, disconnect=False, query_string=b""):
     """Create a real Starlette request without opening an ASGI connection."""
     headers = []
     if authorization is not None:
         headers.append((b"authorization", authorization.encode("ascii")))
     if content_type is not None:
         headers.append((b"content-type", content_type.encode("ascii")))
+    if isinstance(query_string, str):
+        query_string = query_string.encode("ascii")
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
         "method": method, "scheme": "http", "path": "/v1/pig-governor",
-        "raw_path": b"/v1/pig-governor", "query_string": b"", "headers": headers,
+        "raw_path": b"/v1/pig-governor", "query_string": query_string, "headers": headers,
         "client": ("127.0.0.1", 12345), "server": ("testserver", 80),
     }
     if disconnect:
@@ -62,6 +67,69 @@ def document(response):
     return json.loads(response.body)
 
 
+def profile_snapshot(epoch):
+    runtime = {
+        'attention_backend': 'fa3',
+        'decode_attention_backend': None,
+        'prefill_attention_backend': None,
+        'chunked_prefill_size': 4096,
+        'context_length': 262144,
+        'cuda_graph_backend_decode': 'auto',
+        'cuda_graph_backend_prefill': 'auto',
+        'disable_cuda_graph': False,
+        'disable_overlap_schedule': True,
+        'disable_radix_cache': False,
+        'disaggregation_mode': 'null',
+        'dp_size': 1,
+        'dtype': 'bfloat16',
+        'enable_dp_attention': False,
+        'enable_torch_compile': False,
+        'kv_cache_dtype': 'bfloat16',
+        'load_format': 'auto',
+        'max_prefill_tokens': 16384,
+        'max_running_requests': 4,
+        'max_total_tokens': 262144,
+        'mem_fraction_static': 0.8,
+        'model_config_parser': 'auto',
+        'model_impl': 'sglang',
+        'page_size': 1,
+        'pp_max_micro_batch_size': 4,
+        'pp_size': 1,
+        'quantization': None,
+        'sampling_backend': 'pytorch',
+        'schedule_policy': 'fcfs',
+        'speculative_accept_threshold_acc': 0.9,
+        'speculative_accept_threshold_single': 1.0,
+        'speculative_algorithm': 'EAGLE',
+        'speculative_draft_attention_backend': None,
+        'speculative_draft_kv_cache_dtype': 'bfloat16',
+        'speculative_eagle_topk': 1,
+        'speculative_num_draft_tokens': 5,
+        'speculative_num_steps': 3,
+        'torch_compile_max_bs': 32,
+        'tp_size': 1,
+        'weight_version': 'default',
+    }
+    identity = build_runtime_identity(runtime, environ={
+        'PIG_ENGINE_COMMIT': '1' * 40,
+        'PIG_GOVERNOR_COMMIT': '2' * 40,
+        'PIG_MODEL_ARTIFACT_ID': 'sha256:' + '3' * 64,
+        'PIG_RUNTIME_HARDWARE_ID': 'h100-sxm-tp1-v1',
+    })
+    profile = build_profile_document(identity, 4, [])
+    missing, count = coverage((), 4)
+    return {
+        'epoch': epoch,
+        'runtime_identity_sha256': identity['sha256'],
+        'coverage': {
+            'count': count,
+            'total': 16,
+            'missing': [list(key) for key in missing],
+        },
+        'profile': profile,
+    }
+
+
 class FakeManager:
     """A one-rank scheduler transport that records real control commands."""
 
@@ -83,6 +151,12 @@ class FakeManager:
         self.set_calls = 0
         self.get_calls = 0
         self.governor_available = True
+        self.profile_available = True
+        self.profile_ranks = 1
+        self.profile = profile_snapshot(self.core.epoch)
+        self.get_started = asyncio.Event()
+        self.release_get = asyncio.Event()
+        self.release_get.set()
 
     def close(self):
         self.core.close()
@@ -102,9 +176,14 @@ class FakeManager:
 
     async def get_internal_state(self):
         self.get_calls += 1
+        self.get_started.set()
+        await self.release_get.wait()
         if not self.governor_available:
             return [{}]
-        return [{"pig_governor": execute(self.core, "get", self.now)}]
+        state = {"pig_governor": execute(self.core, "get", self.now)}
+        if self.profile_available:
+            state["pig_governor_profile"] = self.profile
+        return [dict(state) for _ in range(self.profile_ranks)]
 
     async def finish_control(self):
         """Release a deliberately delayed scheduler response and drain it."""
@@ -140,6 +219,16 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
                 content_type=content_type,
                 **request_options,
             ),
+        )
+
+    async def profile(self, *, epoch=None, authorization="Bearer admin",
+                      method="GET", query_string=None):
+        if query_string is None:
+            expected = self.manager.profile["epoch"] if epoch is None else epoch
+            query_string = "expected_epoch=" + expected
+        return await http.profile_endpoint(
+            self.manager,
+            request(method, authorization=authorization, query_string=query_string),
         )
 
     async def test_missing_wrong_and_non_admin_tokens_cannot_dispatch(self):
@@ -255,6 +344,141 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         response = await self.get()
         self.assertEqual(response.status_code, 503)
         self.assertEqual(document(response)["error"], "governor_unavailable")
+
+    async def test_profile_auth_uses_resolved_admin_or_api_key(self):
+        for token in (None, "Bearer wrong", "Bearer ordinary"):
+            with self.subTest(token=token):
+                response = await self.profile(authorization=token)
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.manager.get_calls, 0)
+
+        self.manager.serving.admin_api_key = None
+        self.assertEqual(
+            (await self.profile(authorization="Bearer ordinary")).status_code, 200
+        )
+
+    async def test_profile_rejects_missing_duplicate_unknown_and_invalid_query(self):
+        valid = self.manager.profile["epoch"]
+        queries = (
+            b"",
+            b"expected_epoch=" + valid.encode() + b"&expected_epoch=" + valid.encode(),
+            b"expected_epoch=" + valid.encode() + b"&unexpected=1",
+            b"expected_epoch=" + ("A" * 32).encode(),
+            b"expected_epoch=" + ("0" * 31).encode(),
+            b"unexpected=1",
+        )
+        for query in queries:
+            with self.subTest(query=query):
+                response = await self.profile(query_string=query)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(document(response), {"error": "invalid_request"})
+                self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.manager.get_calls, 0)
+
+    async def test_profile_returns_scheduler_snapshot_without_caching(self):
+        response = await self.profile()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(document(response), self.manager.profile)
+        self.assertEqual(self.manager.get_calls, 1)
+
+    async def test_profile_rejects_a_stale_epoch(self):
+        response = await self.profile(epoch="0" * 32)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(document(response), {"error": "profile_epoch_mismatch"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    async def test_profile_rejects_malformed_scheduler_envelopes(self):
+        base = copy.deepcopy(self.manager.profile)
+        valid_epoch = base["epoch"]
+
+        malformed = []
+        extra = copy.deepcopy(base)
+        extra["unexpected"] = True
+        malformed.append(extra)
+        missing = copy.deepcopy(base)
+        del missing["coverage"]
+        malformed.append(missing)
+        digest = copy.deepcopy(base)
+        digest["runtime_identity_sha256"] = "0" * 64
+        malformed.append(digest)
+        summary = copy.deepcopy(base)
+        summary["coverage"]["count"] = 1
+        malformed.append(summary)
+        profile = copy.deepcopy(base)
+        profile["profile"]["predictor"]["abi_version"] = 99
+        malformed.append(profile)
+        epoch = copy.deepcopy(base)
+        epoch["epoch"] = "A" * 32
+        malformed.append(epoch)
+
+        for value in malformed:
+            with self.subTest(value=value):
+                self.manager.profile = value
+                response = await self.profile(epoch=valid_epoch)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(document(response), {"error": "governor_unavailable"})
+                self.assertEqual(response.headers["cache-control"], "no-store")
+        self.manager.profile = base
+
+    async def test_profile_method_and_timeout_are_not_cacheable(self):
+        response = await self.profile(method="POST")
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+        self.manager.get_started = asyncio.Event()
+        self.manager.release_get.clear()
+        with patch.object(http, "CONTROL_TIMEOUT", 0.001):
+            timed = asyncio.create_task(self.profile())
+            await self.manager.get_started.wait()
+            response = await timed
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(document(response), {"error": "control_unavailable"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.manager.release_get.set()
+        task = getattr(self.manager, "_pig_control_task", None)
+        if task is not None:
+            await asyncio.shield(task)
+
+    async def test_profile_requires_one_scheduler_with_profile_state(self):
+        self.manager.profile_available = False
+        response = await self.profile()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(document(response)["error"], "governor_unavailable")
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+        self.manager.profile_available = True
+        self.manager.profile_ranks = 2
+        response = await self.profile()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(document(response)["error"], "governor_unavailable")
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    async def test_profile_and_policy_share_control_busy_mutex(self):
+        current = document(await self.get())
+        payload = {
+            "epoch": current["epoch"], "revision": current["revision"], "reference": 50,
+        }
+        self.manager.release_set.clear()
+        patch_task = asyncio.create_task(self.patch(payload))
+        await self.manager.set_started.wait()
+        response = await self.profile()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(document(response), {"error": "control_busy"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        await self.manager.finish_control()
+        self.assertEqual((await patch_task).status_code, 200)
+
+        self.manager.get_started = asyncio.Event()
+        self.manager.release_get.clear()
+        profile_task = asyncio.create_task(self.profile())
+        await self.manager.get_started.wait()
+        response = await self.get()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(document(response), {"error": "control_busy"})
+        self.manager.release_get.set()
+        self.assertEqual((await profile_task).status_code, 200)
 
     async def test_concurrent_same_revision_patch_dispatches_once(self):
         current = document(await self.get())

@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-/* ABI v3: caller provides valid pointers; free must not race another call.
+/* ABI v4: caller provides valid pointers; free must not race another call.
  * Status: 0 success, 1 invalid input, 2 revision conflict, 3 internal failure.
  * Outputs and state remain unchanged on invalid input or revision conflict.
  * new starts revision at 1 and receives the native max running request bound.
@@ -21,6 +21,13 @@ extern "C" {
  * duration arguments are total Decode sequence-seconds, not elapsed wall-time.
  * A positive token delta with zero sequence-seconds is invalid evidence.
  * observe_batch commits surface and aggregate observations in one transaction.
+ * Imported profile cells are deadline-bound priors and never become live
+ * rolling-window evidence. Exact keys precede jointly-heavier fallback keys.
+ * Admission observed is one only when selected live evidence constrains or is
+ * qualified for the selected key; prior-only fits use COLD_PRIOR.
+ * A zero-cell profile uses a null cells pointer; nonzero count requires cells.
+ * export_profile returns only currently qualified live surface cells.
+ * start_surface_epoch requires active_after <= max_running_requests.
  */
 typedef struct PigGovernor PigGovernor;
 typedef struct {
@@ -53,9 +60,22 @@ typedef struct {
     uint64_t active_sequences;
 } PigGovernorAdmission;
 
+typedef struct {
+    uint32_t concurrency;
+    uint32_t pressure_class;
+    uint64_t long_tokens;
+    double long_seconds;
+    uint64_t short_tokens;
+    double short_seconds;
+    double approved_lower_tps;
+} PigGovernorProfileCellV1;
+
 uint32_t pig_governor_abi_version(void);
 int32_t pig_governor_new(double reference, uint32_t max_running_requests,
                        PigGovernor **out);
+int32_t pig_governor_new_with_profile(
+    double reference, uint32_t max_running_requests, double now, double ttl,
+    const PigGovernorProfileCellV1 *cells, uint32_t count, PigGovernor **out);
 int32_t pig_governor_free(PigGovernor *handle);
 int32_t pig_governor_observe(PigGovernor *handle, double now, uint64_t delta,
                            uint64_t active_after);
@@ -71,6 +91,11 @@ int32_t pig_governor_observe_batch(PigGovernor *handle, double now,
 int32_t pig_governor_prefill(PigGovernor *handle, double now, double wall);
 int32_t pig_governor_update_reference(PigGovernor *handle,
                                     uint64_t expected_revision, double reference);
+int32_t pig_governor_start_surface_epoch(PigGovernor *handle, double now,
+                                         uint64_t active_after);
+int32_t pig_governor_export_profile(PigGovernor *handle, double now,
+                                    PigGovernorProfileCellV1 *buffer,
+                                    uint32_t capacity, uint32_t *out_count);
 int32_t pig_governor_snapshot(PigGovernor *handle, double now,
                             PigGovernorSnapshot *out);
 int32_t pig_governor_admit(PigGovernor *handle, double now,

@@ -1,0 +1,73 @@
+{
+  "schema": "phala.governor-v4-linux-validation.v1",
+  "date": "2026-09-21",
+  "scope": "Authorized Linux CPU builder and patched SGLang source; no GPU, final-image or production acceptance.",
+  "source": {
+    "upstream_sglang": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+    "serving_parent_commit": "63a21f09fcc26892a6d30c76945b783aa0eb3149",
+    "serving_parent_tree": "0a1c456602e7dbadacc55449bc64625b2797c3bc",
+    "pre_header_error_commit": "5871a82cb0ef1221126b8c9712881e497041bd38",
+    "pre_header_error_tree": "b0b36fb1d0b46410a6bd8c721ddb163237cc1be9",
+    "complete_engine_commit": "a43a9d30eb9879ec54c607d1d2edfdb5c536bb07",
+    "complete_engine_tree": "0dacab8ac525e59aa02875bfd83c1157637a4bc9",
+    "governor_hook_sha256": "ad06b65add7441d7875ea78ab129830edab720c4b9ce7519236ae7aaefdede15"
+  },
+  "artifacts": {
+    "rust_image": "rust:1.88-bookworm",
+    "sglang_test_image_id": "d0614d682663",
+    "release_library_sha256": "062562ecb7ce7900842239408538be040086ffa91553880fd7a66381015b7a60"
+  },
+  "checks": [
+    {
+      "name": "rust-unit",
+      "command": "cargo test --locked",
+      "passed": true,
+      "tests": 28
+    },
+    {
+      "name": "rust-release-build",
+      "command": "cargo build --release --locked",
+      "passed": true
+    },
+    {
+      "name": "rust-release-check",
+      "command": "cargo check --release --all-targets --locked",
+      "passed": true
+    },
+    {
+      "name": "component-contract",
+      "command": "python scripts/check_component_contract.py",
+      "passed": true,
+      "abi_version": 4
+    },
+    {
+      "name": "governor-python-ffi-sglang",
+      "command": "python -m unittest discover -s tests -p test_*.py -v",
+      "passed": true,
+      "tests": 107
+    },
+    {
+      "name": "native-sglang-pre-header-errors",
+      "command": "python -m pytest -q test/registered/unit/entrypoints/openai/test_streaming_pre_header_errors.py",
+      "passed": true,
+      "tests": 10
+    },
+    {
+      "name": "python-compileall-and-diff-check",
+      "passed": true
+    },
+    {
+      "name": "clean-patch-replay",
+      "passed": true,
+      "common_tree": "b0b36fb1d0b46410a6bd8c721ddb163237cc1be9",
+      "complete_tree": "0dacab8ac525e59aa02875bfd83c1157637a4bc9"
+    }
+  ],
+  "boundaries": {
+    "gpu_acceptance": false,
+    "immutable_image_acceptance": false,
+    "c2_offline_acceptance": false,
+    "redpill_fallback_acceptance": false,
+    "production_acceptance": false
+  }
+}

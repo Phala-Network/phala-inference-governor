@@ -215,7 +215,8 @@ and the discarded static TAIL semaphore are not part of this design.
 
 ## Implementation status (2026-09-21)
 
-The local implementation now uses ABI v3 and a bounded response surface:
+The local source candidate is package 0.2.0 with C ABI v4 and a bounded
+response surface:
 
 - `pig_governor_observe_surface(now, delta, sequence_seconds, concurrency, pressure_class)`
   records real Decode evidence in the target cell. The mass is assigned to the
@@ -250,10 +251,20 @@ The local implementation now uses ABI v3 and a bounded response surface:
   reservation; retraction reuses that reservation.
 - `reference=0` is the offline observation mode. A CAS update to 50 preserves the
   surface.
-- The SGLang hook patch is regenerated from the source tree with line-ending
-  normalization; it now applies to the clean parent commit.
+- Production startup with a positive reference requires a hash-pinned,
+  unexpired profile whose exact runtime identity matches all resolved engine,
+  model, hardware and scheduler fields. Reference zero may start without it.
+- `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` exports a strict,
+  non-cacheable envelope containing coverage and a loadable profile document.
+- A runtime/model identity change clears live/prior evidence and rotates the CAS
+  epoch while preserving request-attached lifecycle accounting.
+- The ABI v4 SGLang hook patch was regenerated deterministically from complete
+  engine parent `5871a82cb0ef1221126b8c9712881e497041bd38`, replayed cleanly and
+  committed as `a43a9d30eb9879ec54c607d1d2edfdb5c536bb07` with tree
+  `0dacab8ac525e59aa02875bfd83c1157637a4bc9`.
 
-Remaining gates are a Linux builder test run, the complete SGLang lifecycle/429
-suite, image composition and the authorized C2 offline rollout.
-CI now applies the hook patch to a clean SGLang parent and runs the full Python
-suite inside the composed image dependency environment before image publication.
+The Linux builder, full SGLang lifecycle/real-HTTP-429 suite and native common
+HTTP propagation regression passed on September 21, 2026. Remaining gates are
+GPU verification, image composition and the authorized C2 offline rollout.
+GitHub CI is a final gate after local and builder checks; it is not the
+development test environment.

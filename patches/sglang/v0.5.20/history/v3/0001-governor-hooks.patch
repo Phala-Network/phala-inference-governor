@@ -1,8 +1,8 @@
 diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
-index 388371a145b6a7a3a383bdbc3685dbc7239bcf24..f88654b43efb9696814d9f9a85afb69dc74d7248 100644
+index 388371a145..6aac387297 100644
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
-@@ -816,6 +816,26 @@ async def get_server_info():
+@@ -816,6 +816,16 @@ async def get_server_info():
      return await server_info()
  
  
@@ -16,21 +16,11 @@ index 388371a145b6a7a3a383bdbc3685dbc7239bcf24..f88654b43efb9696814d9f9a85afb69d
 +    return await endpoint(_global_state.tokenizer_manager, request)
 +
 +
-+@app.get("/admin/v1/predictive-profile")
-+@auth_level(AuthLevel.ADMIN_OPTIONAL)
-+async def governor_profile(request: Request):
-+    if os.environ.get("PIG_GOVERNOR_ENABLE") != "1":
-+        raise HTTPException(status_code=404, detail="Governor not enabled")
-+    from pig_governor.http import profile_endpoint
-+
-+    return await profile_endpoint(_global_state.tokenizer_manager, request)
-+
-+
  @app.get("/server_info")
  async def server_info():
      """The startup configuration, plus live scheduler state.
 diff --git a/python/sglang/srt/managers/io_struct.py b/python/sglang/srt/managers/io_struct.py
-index 6f1cf54b9f807ea13247ff19a2e51cd110c57f4f..f9e4a53d01d765f8313f53783b0d5b779d529e85 100644
+index 6f1cf54b9f..f9e4a53d01 100644
 --- a/python/sglang/srt/managers/io_struct.py
 +++ b/python/sglang/srt/managers/io_struct.py
 @@ -2113,8 +2113,8 @@ class GetInternalStateReqOutput(BaseReq, kw_only=True):
@@ -45,50 +35,22 @@ index 6f1cf54b9f807ea13247ff19a2e51cd110c57f4f..f9e4a53d01d765f8313f53783b0d5b77
  
  
 diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
-index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336c38781db 100644
+index 9f5bc8c165..2b1d9a6abc 100644
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
-@@ -466,6 +466,7 @@ class Scheduler(
+@@ -466,6 +466,11 @@ class Scheduler(
  
          # Parse args
          self.server_args = server_args
 +        self.governor = None
++        if os.environ.get("PIG_GOVERNOR_ENABLE") == "1":
++            from pig_governor.sglang import create
++
++            self.governor = create(server_args)
          self.nccl_port = port_args.nccl_port
          self.schedule_policy = get_schedule().schedule_policy
          self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
-@@ -647,6 +648,7 @@ class Scheduler(
- 
-         # Init running status
-         self.init_running_status()
-+        self.init_governor()
- 
-         # Init chunked prefill
-         self.init_chunked_prefill()
-@@ -1291,6 +1293,23 @@ class Scheduler(
-         self.forward_sleep_time = None
-         self._engine_paused = False
- 
-+    def init_governor(self):
-+        if os.environ.get("PIG_GOVERNOR_ENABLE") != "1":
-+            return
-+        from pig_governor.sglang import create
-+
-+        self.governor = create(
-+            self.server_args,
-+            runtime_overrides={
-+                "context_length": self.model_config.context_len,
-+                "disable_radix_cache": self.disable_radix_cache,
-+                "max_prefill_tokens": self.max_prefill_tokens,
-+                "max_running_requests": self.max_running_requests,
-+                "max_total_tokens": self.max_total_num_tokens,
-+                "page_size": self.page_size,
-+            },
-+        )
-+
-     def init_chunked_prefill(self):
-         self.chunked_prefill_size = get_schedule().chunked_prefill_size
-         self.prefill_decode_interval = get_schedule().prefill_decode_interval or 0
-@@ -1340,7 +1359,11 @@ class Scheduler(
+@@ -1340,7 +1345,11 @@ class Scheduler(
          if sizer.profile_and_fit():
              self.dynamic_chunk_sizer = sizer
  
@@ -101,7 +63,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
          if self._prefill_decode_interval_remaining == 0:
              return False
  
-@@ -3062,6 +3085,13 @@ class Scheduler(
+@@ -3062,6 +3071,13 @@ class Scheduler(
                  self._add_request_to_queue(req)
                  return
  
@@ -115,7 +77,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
          added_to_grammar_queue = self.grammar_manager.process_req_with_grammar(req)
          if not added_to_grammar_queue:
              self._add_request_to_queue(req)
-@@ -3198,6 +3228,15 @@ class Scheduler(
+@@ -3198,6 +3214,15 @@ class Scheduler(
              req.storage_prefetch_last_match_len = None
              req.staged_prefetch_plan = None
          if self.disaggregation_mode == DisaggregationMode.NULL:
@@ -131,7 +93,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
              if self._abort_on_queued_limit(req):
                  return
              self._prefetch_kvcache(req)
-@@ -3219,6 +3258,39 @@ class Scheduler(
+@@ -3219,6 +3244,39 @@ class Scheduler(
          else:
              raise ValueError(f"Invalid {self.disaggregation_mode=}")
  
@@ -171,7 +133,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
      def _reject_sampling_mask_request(self, req: Req, error_msg: str) -> None:
          """Return a sampling-mask validation error without running the model."""
          logger.error(f"{error_msg}, {req.rid=}")
-@@ -3654,7 +3726,7 @@ class Scheduler(
+@@ -3654,7 +3712,7 @@ class Scheduler(
  
          if self.dllm_config is not None:
              new_batch = self.get_new_batch_dllm(running_batch)
@@ -180,7 +142,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
              new_batch = None
          else:
              prefill_plan = self.get_new_batch_prefill(running_batch)
-@@ -4632,6 +4704,8 @@ class Scheduler(
+@@ -4632,6 +4690,8 @@ class Scheduler(
          elif batch.forward_mode.is_idle():
              self.batch_result_processor.process_batch_result_idle(batch, result)
  
@@ -189,19 +151,17 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
          self._record_step_counters(batch, result)
  
          self.metrics_reporter.log_batch_result_stats(batch, result)
-@@ -5023,6 +5097,11 @@ class Scheduler(
+@@ -5023,6 +5083,9 @@ class Scheduler(
          # Resolved config (pristine server_args + post-publish overrides) so a
          # readback reflects values changed via /set_internal_state, not startup.
          ret = get_context().resolved_server_args_dict()
 +        if self.governor is not None:
-+            now = time.monotonic()
-+            ret["pig_governor"] = self.governor.policy_snapshot(now)
++            ret["pig_governor"] = self.governor.core.snapshot(time.monotonic())
 +            ret["pig_governor_admission"] = self.governor.admission_snapshot()
-+            ret["pig_governor_profile"] = self.governor.profile_snapshot(now)
          ret["world_size"] = compute_world_size(
              enable_dp_attention=get_parallel().enable_dp_attention,
              dp_size=get_parallel().dp_size,
-@@ -5082,6 +5161,14 @@ class Scheduler(
+@@ -5082,6 +5145,14 @@ class Scheduler(
  
      def set_internal_state(self, recv_req: SetInternalStateReq):
          server_args_dict = recv_req.server_args
@@ -216,25 +176,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..7f62d5cce78ee1635e3b51e268d19336
          args_allow_update = set(
              [
                  "pp_max_micro_batch_size",
-@@ -5156,6 +5243,8 @@ class Scheduler(
-                 self.draft_worker.clear_info_records()
-             if remaining:
-                 get_context().override(source="update_server_args", **remaining)
-+                if self.governor is not None:
-+                    self.governor.refresh_identity(time.monotonic())
-             logger.info(f"Config updated via context override: {remaining}")
- 
-         return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
-@@ -5200,6 +5289,8 @@ class Scheduler(
- 
-         old_version = get_serving().weight_version
-         get_context().override("scheduler.weight_version", weight_version=new_version)
-+        if self.governor is not None:
-+            self.governor.refresh_identity(time.monotonic())
- 
-         live_reqs = {
-             *self.collect_inflight_reqs(),
-@@ -5896,6 +5987,10 @@ def run_scheduler_process(
+@@ -5896,6 +5967,10 @@ def run_scheduler_process(
  def _make_abort_req(
      req: Req, finished_reason: Optional[FinishReasonDict] = None
  ) -> AbortReq:

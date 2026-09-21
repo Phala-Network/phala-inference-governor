@@ -108,7 +108,7 @@ def main():
             "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
             "scope": "Private real-library CPU handle; no HTTP, model, live policy or image identity acceptance.",
         }
-        require(result["abi_version"] == 3, "unexpected ABI")
+        require(result["abi_version"] == 4, "unexpected ABI")
         print(json.dumps(result, sort_keys=True))
     finally:
         core.close()

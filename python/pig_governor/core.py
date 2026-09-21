@@ -1,8 +1,10 @@
 """Small versioned C ABI binding. All time inputs use host monotonic seconds."""
+from collections.abc import Mapping
 import ctypes as C
 import math
 import os
 import threading
+import time
 import uuid
 
 
@@ -35,6 +37,18 @@ class Admission(C.Structure):
         ("evidence_concurrency", C.c_uint32),
         ("evidence_pressure_class", C.c_uint32),
         ("active_sequences", C.c_uint64),
+    ]
+
+
+class ProfileCellV1(C.Structure):
+    _fields_ = [
+        ("concurrency", C.c_uint32),
+        ("pressure_class", C.c_uint32),
+        ("long_tokens", C.c_uint64),
+        ("long_seconds", C.c_double),
+        ("short_tokens", C.c_uint64),
+        ("short_seconds", C.c_double),
+        ("approved_lower_tps", C.c_double),
     ]
 
 
@@ -76,17 +90,32 @@ def _pressure_class(value):
 
 class Governor:
     """Own one controller handle, never an SGLang Req, tensor, or KV page."""
-    def __init__(self, reference, *, max_running_requests, library=None):
+    def __init__(self, reference, *, max_running_requests, profile_cells=None,
+                 profile_ttl_seconds=None, now=None, library=None):
         path = library or os.environ.get("PIG_GOVERNOR_LIBRARY")
         if not path or not os.path.isabs(path):
             raise ValueError("PIG_GOVERNOR_LIBRARY must name an absolute library path")
         self._lib = C.CDLL(path)
         self._lock = threading.RLock()
         self._handle = C.c_void_p()
+        self._max_running_requests = _max_running_requests(max_running_requests)
+        self._profile_cell_count = 0
+        self._profile_expires_at = None
         self.epoch = uuid.uuid4().hex
+        try:
+            abi_version = getattr(self._lib, "pig_governor_abi_version")
+        except AttributeError:
+            raise RuntimeError("Governor library does not expose an ABI version") from None
+        abi_version.argtypes, abi_version.restype = [], C.c_uint32
+        if abi_version() != 4:
+            raise RuntimeError("Unsupported Governor ABI: expected version 4")
         definitions = {
-            "abi_version": ([], C.c_uint32),
             "new": ([C.c_double, C.c_uint32, C.POINTER(C.c_void_p)], C.c_int32),
+            "new_with_profile": (
+                [C.c_double, C.c_uint32, C.c_double, C.c_double,
+                 C.POINTER(ProfileCellV1), C.c_uint32, C.POINTER(C.c_void_p)],
+                C.c_int32,
+            ),
             "free": ([C.c_void_p], C.c_int32),
             "observe": ([C.c_void_p, C.c_double, C.c_uint64, C.c_uint64], C.c_int32),
             "observe_surface": (
@@ -101,6 +130,14 @@ class Governor:
             ),
             "prefill": ([C.c_void_p, C.c_double, C.c_double], C.c_int32),
             "update_reference": ([C.c_void_p, C.c_uint64, C.c_double], C.c_int32),
+            "start_surface_epoch": (
+                [C.c_void_p, C.c_double, C.c_uint64], C.c_int32,
+            ),
+            "export_profile": (
+                [C.c_void_p, C.c_double, C.POINTER(ProfileCellV1),
+                 C.c_uint32, C.POINTER(C.c_uint32)],
+                C.c_int32,
+            ),
             "snapshot": ([C.c_void_p, C.c_double, C.POINTER(Snapshot)], C.c_int32),
             "admit": (
                 [C.c_void_p, C.c_double, C.c_uint32, C.c_uint32,
@@ -114,15 +151,59 @@ class Governor:
             ),
         }
         for name, (arguments, result) in definitions.items():
-            function = getattr(self._lib, "pig_governor_" + name)
+            symbol = "pig_governor_" + name
+            try:
+                function = getattr(self._lib, symbol)
+            except AttributeError:
+                raise RuntimeError(
+                    "Governor ABI v4 library is missing symbol: " + symbol
+                ) from None
             function.argtypes, function.restype = arguments, result
-        if self._lib.pig_governor_abi_version() != 3:
-            raise RuntimeError("Unsupported Governor ABI")
-        self._check(self._lib.pig_governor_new(
-            _finite(reference),
-            _max_running_requests(max_running_requests),
-            C.byref(self._handle),
-        ))
+        reference = _finite(reference)
+        if (profile_cells is None) != (profile_ttl_seconds is None):
+            raise ValueError("profile_cells and profile_ttl_seconds are required together")
+        if profile_cells is None:
+            self._check(self._lib.pig_governor_new(
+                reference, self._max_running_requests, C.byref(self._handle),
+            ))
+        else:
+            if not isinstance(profile_cells, (list, tuple)):
+                raise ValueError("profile_cells must be a list or tuple")
+            if len(profile_cells) > self._max_running_requests * 4:
+                raise ValueError("Too many profile cells")
+            native_cells = (
+                (ProfileCellV1 * len(profile_cells))(
+                    *(self._profile_cell(cell) for cell in profile_cells)
+                )
+                if profile_cells else None
+            )
+            profile_now = time.monotonic() if now is None else _finite(now)
+            ttl = _finite(profile_ttl_seconds)
+            if ttl == 0:
+                raise ValueError("profile_ttl_seconds must be positive")
+            self._check(self._lib.pig_governor_new_with_profile(
+                reference, self._max_running_requests, profile_now, ttl,
+                native_cells, len(profile_cells), C.byref(self._handle),
+            ))
+            self._profile_cell_count = len(profile_cells)
+            self._profile_expires_at = profile_now + ttl
+
+    def _profile_cell(self, cell):
+        if not isinstance(cell, Mapping):
+            raise ValueError("Profile cells must be mappings")
+        try:
+            lower = cell["evidence_lower_tps"]
+            return ProfileCellV1(
+                _concurrency(cell["concurrency"]),
+                _pressure_class(cell["pressure_class"]),
+                _integer(cell["long_tokens"]),
+                _finite(cell["long_seconds"]),
+                _integer(cell["short_tokens"]),
+                _finite(cell["short_seconds"]),
+                _finite(lower),
+            )
+        except KeyError as error:
+            raise ValueError("Incomplete profile cell") from error
 
     @staticmethod
     def _check(status):
@@ -182,18 +263,57 @@ class Governor:
         return bool(selected.value)
 
     def update_reference(self, expected_epoch, expected_revision, reference):
-        if expected_epoch != self.epoch:
-            raise RevisionConflict("Scheduler epoch changed")
-        self._call("update_reference", _integer(expected_revision), _finite(reference))
+        with self._lock:
+            if expected_epoch != self.epoch:
+                raise RevisionConflict("Scheduler epoch changed")
+            self._call("update_reference", _integer(expected_revision), _finite(reference))
+
+    def rotate_surface_epoch(self, now, active_after):
+        now = _finite(now)
+        active_after = _integer(active_after)
+        with self._lock:
+            new_epoch = uuid.uuid4().hex
+            self._call("start_surface_epoch", now, active_after)
+            self.epoch = new_epoch
+            self._profile_cell_count = 0
+            self._profile_expires_at = None
+
+    def export_profile(self, now):
+        now = _finite(now)
+        capacity = self._max_running_requests * 4
+        cells = (ProfileCellV1 * capacity)()
+        count = C.c_uint32()
+        self._call("export_profile", now, cells, capacity, C.byref(count))
+        return [
+            {
+                "concurrency": cell.concurrency,
+                "pressure_class": cell.pressure_class,
+                "long_tokens": cell.long_tokens,
+                "long_seconds": cell.long_seconds,
+                "short_tokens": cell.short_tokens,
+                "short_seconds": cell.short_seconds,
+                "evidence_lower_tps": cell.approved_lower_tps,
+            }
+            for cell in cells[:count.value]
+        ]
 
     def snapshot(self, now):
+        now = _finite(now)
         result = Snapshot()
-        self._call("snapshot", _finite(now), C.byref(result))
-        if result.abi_version != 3:
-            raise RuntimeError("Incompatible snapshot ABI")
+        with self._lock:
+            self._call("snapshot", now, C.byref(result))
+            if result.abi_version != 4:
+                raise RuntimeError("Incompatible snapshot ABI")
+            epoch = self.epoch
+            profile_cell_count = (
+                self._profile_cell_count
+                if self._profile_expires_at is not None and now < self._profile_expires_at
+                else 0
+            )
+            profile_expires_at = self._profile_expires_at
         seconds = result.sequence_seconds_60s
         return {
-            "epoch": self.epoch, "revision": result.revision,
+            "epoch": epoch, "revision": result.revision,
             "mutable": {"tps_reference": result.reference},
             "observed": bool(result.observed),
             "average_tps": result.tokens_60s / seconds if seconds > 0 else None,
@@ -204,6 +324,10 @@ class Governor:
             ),
             "decode_tokens": result.tokens_60s, "decode_sequence_seconds": seconds,
             "active_decode_sequences": result.active_sequences,
+            "profile": {
+                "cell_count": profile_cell_count,
+                "expires_at": profile_expires_at,
+            },
             "reference_semantics": "soft_target", "individual_tps_binding": False,
         }
 
@@ -219,7 +343,7 @@ class Governor:
                 _pressure_class(pressure_class),
                 C.byref(result),
             ))
-        if result.abi_version != 3:
+        if result.abi_version != 4:
             raise RuntimeError("Incompatible admission ABI")
         return {
             "allowed": bool(result.allowed),

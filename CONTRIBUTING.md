@@ -4,17 +4,19 @@ Maintain Governor's Rust core, Python adapter, policy API and minimal SGLang
 hooks here. Use meaningful controller/integration regressions. Governor never
 owns native request/KV/cache cleanup or TAIL attestation.
 
-Implement independent serving fixes in real source files in
-Phala-Network/sglang, one problem and regression per PR. Deterministic patch
-exports, applicability, explicit model profiles and dependency order belong to
-sglang-serving-patches. Do not hand-edit the same serving implementation here.
+Develop independent serving fixes in real source files and record them in the
+single ordered stack maintained by sglang-serving-patches. Group changes and
+reviews by coherent behavior and regression coverage; the release workflow does
+not require one PR per patch. Keep common fixes single-copy, and place only true
+model or family differences behind their relevant module/model/configuration.
+Do not hand-edit the same serving implementation here.
 
-A generated engine branch may expose Governor hooks as readable source diffs,
-but it is a derived view; the hook's human-maintained source remains here.
-Deployment configuration in phala-models-compose pins the independent sources
-and publishes composed images under ghcr.io/phala-network/sglang. It records the
-exact final engine tree and separates prebuild inputs from postbuild image
-digests.
+Governor publishes its component source and minimal hook patch. Phala-Network/sglang
+composes the ordered serving stack and pinned Governor input on the fixed upstream
+baseline, producing the complete source commit/tree used for release. Deployment
+configuration in phala-models-compose consumes that fixed complete source and
+publishes composed images under ghcr.io/phala-network/sglang. It records the exact
+final engine tree and separates prebuild inputs from postbuild image digests.
 
 Keep upstream, patch-set, Governor and model-profile versions distinct. Preserve
 historical tags and artifacts; never force-update them to rename ownership.
