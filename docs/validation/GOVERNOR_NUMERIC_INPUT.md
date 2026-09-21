@@ -11,7 +11,9 @@ subtest errors (positive/negative unrepresentable integers), and one HTTP error.
 Green evidence: 4 FFI methods, 14 HTTP methods and 2 routing methods passed.
 Checks cover no scheduler dispatch for invalid HTTP input, unchanged policy
 revision/reference and observation history, existing CAS and authentication.
-No new TPS floor, maximum product TPS policy or queue/TTFT rejection is added.
+This historical numeric-input result predates the 2026-09-21 mutable
+`max_running`/`max_waiting` admission policy; it remains evidence only for the
+numeric validation paths it exercised.
 
 Execution used remote805, fixed C4 image
 sha256:c4fe40487178fd7738600562c114e2198d281d5ca6c0f5a265019369f6af76c4,

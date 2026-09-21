@@ -137,6 +137,44 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'no Governor reservation'):
             self.adapter.after_result(batch, 1)
 
+    def test_unmanaged_embedding_result_is_outside_decode_governor(self):
+        req = SimpleNamespace(
+            is_prefill_only=True,
+            finished=lambda: False,
+            to_finish=None,
+        )
+        batch = SimpleNamespace(
+            reqs=[req], launch_ts=0,
+            forward_mode=SimpleNamespace(is_extend_without_speculative=lambda: False),
+        )
+        self.adapter.after_result(batch, 1)
+        self.assertEqual(self.adapter.outstanding, 0)
+        self.assertEqual(self.adapter.active, 0)
+
+    def test_owner_mismatch_fails_closed_for_release_and_progress(self):
+        other_core = Governor(0, max_running_requests=4)
+        self.addCleanup(other_core.close)
+        other = SglangGovernor(other_core, max_running_requests=4)
+        req = self._request()
+
+        with self.assertRaisesRegex(RuntimeError, 'different Governor owner'):
+            other.release_request(req)
+        with self.assertRaisesRegex(RuntimeError, 'different Governor owner'):
+            other._progress_for(req)
+
+        self.assertEqual(self.adapter.outstanding, 1)
+        self.assertEqual(other.outstanding, 0)
+
+    def test_progress_owner_mismatch_fails_closed(self):
+        other_core = Governor(0, max_running_requests=4)
+        self.addCleanup(other_core.close)
+        other = SglangGovernor(other_core, max_running_requests=4)
+        req = self._request()
+        self.adapter._progress_for(req)
+
+        with self.assertRaisesRegex(RuntimeError, 'different governor epoch'):
+            other._progress_for(req)
+
     def test_create_reads_resolved_namespaces_not_raw_server_args(self):
         raw = SimpleNamespace(tp_size=8, pp_size=8, dp_size=8,
                               disable_overlap_schedule=False,
@@ -152,16 +190,33 @@ class IntegrationTests(unittest.TestCase):
             'PIG_GOVERNOR_ENABLE': '1',
             'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
             'PIG_TPS_REFERENCE': '0',
+            'PIG_MAX_RUNNING': '41',
+            'PIG_MAX_WAITING': '3',
         }
         with patch.dict('pig_governor.sglang.os.environ', environment, clear=True), \
              patch('pig_governor.sglang.get_parallel', return_value=parallel), \
              patch('pig_governor.sglang.get_schedule', return_value=schedule), \
              patch('pig_governor.sglang.get_disagg', return_value=disagg), \
              patch('pig_governor.sglang.get_context', return_value=context):
-            adapter = create(raw)
+            adapter = create(raw, is_generation=True)
         self.addCleanup(adapter.core.close)
         self.assertIsInstance(adapter, SglangGovernor)
         self.assertEqual(adapter.max_running_requests, 43)
+        self.assertEqual(adapter.native_max_running_requests, 43)
+        self.assertEqual(adapter.max_running, 41)
+        self.assertEqual(adapter.max_waiting, 3)
+
+    def test_create_rejects_non_generation_model_when_enabled(self):
+        with patch.dict(
+            'pig_governor.sglang.os.environ',
+            {'PIG_GOVERNOR_ENABLE': '1'},
+            clear=True,
+        ):
+            for is_generation in (False, None):
+                with self.subTest(is_generation=is_generation), self.assertRaisesRegex(
+                    ValueError, 'requires a generation model'
+                ):
+                    create(SimpleNamespace(), is_generation=is_generation)
 
     def test_create_prefers_effective_max_running_override(self):
         parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
@@ -187,9 +242,15 @@ class IntegrationTests(unittest.TestCase):
                      patch('pig_governor.sglang.get_schedule', return_value=schedule), \
                      patch('pig_governor.sglang.get_disagg', return_value=disagg), \
                      patch('pig_governor.sglang.get_context', return_value=context):
-                    adapter = create(SimpleNamespace(), runtime_overrides=overrides)
+                    adapter = create(
+                        SimpleNamespace(),
+                        runtime_overrides=overrides,
+                        is_generation=True,
+                    )
                 self.addCleanup(adapter.core.close)
                 self.assertEqual(adapter.max_running_requests, 17)
+                self.assertEqual(adapter.max_running, 17)
+                self.assertEqual(adapter.max_waiting, 3)
                 self.assertEqual(
                     adapter.runtime_identity['runtime']['max_running_requests'], 17
                 )
@@ -213,7 +274,43 @@ class IntegrationTests(unittest.TestCase):
              patch('pig_governor.sglang.get_disagg', return_value=disagg), \
              patch('pig_governor.sglang.get_context', return_value=context):
             with self.assertRaisesRegex(ValueError, 'PIG_TPS_PROFILE'):
-                create(SimpleNamespace())
+                create(SimpleNamespace(), is_generation=True)
+
+    def test_create_rejects_invalid_mutable_limits(self):
+        parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
+        schedule = SimpleNamespace(
+            disable_overlap_schedule=True, max_running_requests=43
+        )
+        disagg = SimpleNamespace(disaggregation_mode='null')
+        context = SimpleNamespace(
+            resolved_server_args_dict=lambda: resolved_runtime()
+        )
+        base = {
+            **IDENTITY_ENV,
+            'PIG_GOVERNOR_ENABLE': '1',
+            'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
+            'PIG_TPS_REFERENCE': '0',
+        }
+        for name, value in (
+            ('PIG_MAX_RUNNING', '44'),
+            ('PIG_MAX_RUNNING', '0'),
+            ('PIG_MAX_WAITING', '-1'),
+            ('PIG_MAX_WAITING', '3.0'),
+            ('PIG_MAX_WAITING', '4'),
+        ):
+            with self.subTest(name=name, value=value), patch.dict(
+                'pig_governor.sglang.os.environ', {**base, name: value}, clear=True
+            ), patch(
+                'pig_governor.sglang.get_parallel', return_value=parallel
+            ), patch(
+                'pig_governor.sglang.get_schedule', return_value=schedule
+            ), patch(
+                'pig_governor.sglang.get_disagg', return_value=disagg
+            ), patch(
+                'pig_governor.sglang.get_context', return_value=context
+            ):
+                with self.assertRaises(ValueError):
+                    create(SimpleNamespace(), is_generation=True)
 
     def test_create_rejects_resolved_unsupported_topology(self):
         raw = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1,
@@ -227,7 +324,7 @@ class IntegrationTests(unittest.TestCase):
              patch('pig_governor.sglang.get_schedule', return_value=schedule), \
              patch('pig_governor.sglang.get_disagg', return_value=disagg):
             with self.assertRaisesRegex(ValueError, 'TP1/PP1/non-overlap/no disaggregation'):
-                create(raw)
+                create(raw, is_generation=True)
 
     def test_runtime_identity_change_rotates_epoch_and_clears_surface(self):
         state = resolved_runtime(weight_version='v0')
@@ -240,6 +337,8 @@ class IntegrationTests(unittest.TestCase):
         adapter = SglangGovernor(
             core,
             max_running_requests=43,
+            max_running=40,
+            max_waiting=3,
             runtime_identity=provider(),
             identity_provider=provider,
         )
@@ -252,6 +351,9 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(snapshot['decode_tokens'], 0)
         self.assertEqual(snapshot['active_decode_sequences'], 0)
         self.assertEqual(adapter.surface_epoch_rotations, 1)
+        policy = adapter.policy_snapshot(2)
+        self.assertEqual(policy['mutable']['max_running'], 40)
+        self.assertEqual(policy['mutable']['max_waiting'], 3)
 
     def test_profile_snapshot_is_an_epoch_guarded_loadable_envelope(self):
         identity = build_runtime_identity(resolved_runtime(), environ=IDENTITY_ENV)

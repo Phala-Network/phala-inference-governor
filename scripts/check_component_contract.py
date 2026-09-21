@@ -12,6 +12,7 @@ from pathlib import Path
 import pig_governor.core as binding
 from pig_governor import Governor, RevisionConflict
 from pig_governor.admin import execute
+from pig_governor.scheduler import SchedulerGovernor
 
 
 def require(condition, message):
@@ -30,12 +31,15 @@ def rejected(operation, exception):
 
 def main():
     core = Governor(35, max_running_requests=4)
+    policy = SchedulerGovernor(
+        core, max_running_requests=4, max_running=4, max_waiting=3
+    )
     checks = []
     try:
         core.observe(0, 0, 2)
         core.observe(1, 10, 1)
         core.observe(3, 4, 0)
-        before = execute(core, "get", 3)
+        before = execute(policy, "get", 3)
         require(before["decode_tokens"] == 14, "decode token accounting differs")
         require(before["decode_sequence_seconds"] == 4, "sequence-time accounting differs")
         require(before["average_tps"] == 3.5, "average TPS differs")
@@ -43,7 +47,7 @@ def main():
         require(before["individual_tps_binding"] is False, "per-request binding introduced")
         checks.append("real_decode_accounting_and_soft_reference")
 
-        after = execute(core, "patch", 3, {
+        after = execute(policy, "patch", 3, {
             "expected_epoch": before["epoch"],
             "expected_revision": before["revision"],
             "tps_reference": 50,
@@ -61,16 +65,19 @@ def main():
         wrong_epoch = ("1" if after["epoch"][0] == "0" else "0") + after["epoch"][1:]
         rejected(lambda: core.update_reference(wrong_epoch, after["revision"], 60),
                  RevisionConflict)
-        require(core.snapshot(3) == after, "failed CAS mutated controller")
+        require(policy.policy_snapshot(3) == after, "failed CAS mutated controller")
         checks.append("stale_revision_and_epoch_rejected")
 
         for reference in (True, -1, float("nan"), float("inf"), 10**1000):
-            rejected(lambda: execute(core, "patch", 3, {
+            rejected(lambda: execute(policy, "patch", 3, {
                 "expected_epoch": after["epoch"],
                 "expected_revision": after["revision"],
                 "tps_reference": reference,
             }), ValueError)
-            require(core.snapshot(3) == after, "invalid reference mutated controller")
+            require(
+                policy.policy_snapshot(3) == after,
+                "invalid reference mutated controller",
+            )
         checks.append("invalid_reference_rejected_without_mutation")
 
         admission = core.admit(3, 1, 0)

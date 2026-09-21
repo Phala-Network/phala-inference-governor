@@ -19,6 +19,10 @@ pub const ADMISSION_REFERENCE_DISABLED: u32 = 1;
 pub const ADMISSION_TPS_RISK: u32 = 2;
 pub const ADMISSION_COLD_PRIOR: u32 = 3;
 pub const ADMISSION_UNKNOWN: u32 = 4;
+/// Reserved for the Scheduler-owned post-admit waiting gate. The Rust TPS
+/// predictor never emits this value, but ABI v4 consumers may report it in the
+/// composed admission decision.
+pub const ADMISSION_WAITING_LIMIT: u32 = 5;
 
 const BUCKET_SECONDS: f64 = 0.5;
 const WINDOW_SECONDS: f64 = 60.0;

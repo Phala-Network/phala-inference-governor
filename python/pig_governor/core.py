@@ -160,6 +160,7 @@ class Governor:
                 ) from None
             function.argtypes, function.restype = arguments, result
         reference = _finite(reference)
+        self._reference = reference
         if (profile_cells is None) != (profile_ttl_seconds is None):
             raise ValueError("profile_cells and profile_ttl_seconds are required together")
         if profile_cells is None:
@@ -263,10 +264,19 @@ class Governor:
         return bool(selected.value)
 
     def update_reference(self, expected_epoch, expected_revision, reference):
+        reference = _finite(reference)
         with self._lock:
             if expected_epoch != self.epoch:
                 raise RevisionConflict("Scheduler epoch changed")
-            self._call("update_reference", _integer(expected_revision), _finite(reference))
+            self._call("update_reference", _integer(expected_revision), reference)
+            self._reference = reference
+
+    @property
+    def reference(self):
+        with self._lock:
+            if not self._handle:
+                raise RuntimeError("Controller closed")
+            return self._reference
 
     def rotate_surface_epoch(self, now, active_after):
         now = _finite(now)

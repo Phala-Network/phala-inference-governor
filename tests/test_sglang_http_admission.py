@@ -21,11 +21,13 @@ from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
 
 ADMISSION_MESSAGE = "The request is rejected by Governor TPS admission."
+WAITING_MESSAGE = "The request is rejected by the Governor waiting limit."
 
 
 class _FakeManager:
     def __init__(self):
         self.reject = True
+        self.message = ADMISSION_MESSAGE
         self.server_args = SimpleNamespace()
         self.request_logger = SimpleNamespace(log_requests=False, log_requests_level=0)
 
@@ -33,7 +35,7 @@ class _FakeManager:
         if self.reject:
             raise HTTPException(
                 status_code=HTTPStatus.TOO_MANY_REQUESTS,
-                detail=ADMISSION_MESSAGE,
+                detail=self.message,
             )
         yield {"text": "ok"}
 
@@ -239,22 +241,24 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_all_openai_generation_routes_return_real_429(self):
-        for path in (
-            "/v1/chat/completions",
-            "/v1/completions",
-            "/v1/responses",
-        ):
-            for stream in (False, True):
-                with self.subTest(path=path, stream=stream):
-                    response = await self.client.post(path, json={"stream": stream})
-                    self.assertEqual(response.status_code, 429)
-                    self.assertNotEqual(
-                        response.headers.get("content-type"), "text/event-stream"
-                    )
-                    body = response.json()
-                    error = body.get("error", body)
-                    self.assertEqual(error["message"], ADMISSION_MESSAGE)
-                    self.assertEqual(error["code"], 429)
+        for message in (ADMISSION_MESSAGE, WAITING_MESSAGE):
+            self.manager.message = message
+            for path in (
+                "/v1/chat/completions",
+                "/v1/completions",
+                "/v1/responses",
+            ):
+                for stream in (False, True):
+                    with self.subTest(path=path, stream=stream, message=message):
+                        response = await self.client.post(path, json={"stream": stream})
+                        self.assertEqual(response.status_code, 429)
+                        self.assertNotEqual(
+                            response.headers.get("content-type"), "text/event-stream"
+                        )
+                        body = response.json()
+                        error = body.get("error", body)
+                        self.assertEqual(error["message"], message)
+                        self.assertEqual(error["code"], 429)
 
     async def test_normal_streams_still_start_as_sse(self):
         self.manager.reject = False

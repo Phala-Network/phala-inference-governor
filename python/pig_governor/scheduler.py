@@ -5,6 +5,19 @@ including abort/retraction cleanup paths; retraction alone is not terminal.
 No request registry, cache lookup, tensor readback, or admission acknowledgement.
 """
 from dataclasses import dataclass
+import threading
+
+
+MAX_WAITING_LIMIT = 3
+ADMISSION_REASON_WAITING_LIMIT = 5
+ADMISSION_REASON_NAMES = {
+    0: "fit",
+    1: "reference_disabled",
+    2: "tps_risk",
+    3: "cold_prior",
+    4: "unknown",
+    ADMISSION_REASON_WAITING_LIMIT: "waiting_limit",
+}
 
 
 @dataclass(slots=True)
@@ -29,16 +42,36 @@ class Reservation:
 class SchedulerGovernor:
     _CONTEXT_CLASS_UPPERS = (4_096, 16_384, 65_536)
 
-    def __init__(self, core, *, max_running_requests=1):
+    def __init__(self, core, *, max_running_requests=1, max_running=None,
+                 max_waiting=MAX_WAITING_LIMIT):
         if (
             type(max_running_requests) is not int
             or max_running_requests <= 0
             or max_running_requests >= 2**32
         ):
             raise ValueError("Invalid native max_running_requests")
+        if max_running is None:
+            max_running = max_running_requests
+        if (
+            type(max_running) is not int
+            or max_running <= 0
+            or max_running > max_running_requests
+        ):
+            raise ValueError("Invalid Governor max_running")
+        if type(max_waiting) is not int or not 0 <= max_waiting <= MAX_WAITING_LIMIT:
+            raise ValueError("Invalid Governor max_waiting")
+        if max_running + max_waiting >= 2**64:
+            raise ValueError("Governor admission capacity overflow")
         self.core = core
+        self._policy_lock = threading.RLock()
         self.active = 0
+        self.native_max_running_requests = max_running_requests
+        # Compatibility name used by existing component consumers. This is the
+        # immutable physical SGLang bound, not the mutable Governor policy.
         self.max_running_requests = max_running_requests
+        self.max_running = max_running
+        self.max_waiting = max_waiting
+        self.last_waiting_count = None
         self.outstanding = 0
         self.admitted_pressure_counts = [0, 0, 0, 0]
         self.active_pressure_counts = [0, 0, 0, 0]
@@ -73,47 +106,138 @@ class SchedulerGovernor:
                 return index
         return candidate_class
 
-    def admit_request(self, req, now, *, is_retracted=False):
+    def _decorate_admission(self, decision, projected_waiting):
+        result = dict(decision)
+        reason = result.get("reason")
+        if reason not in ADMISSION_REASON_NAMES:
+            raise RuntimeError("Governor returned an unknown admission reason")
+        result.update({
+            "reason_name": ADMISSION_REASON_NAMES[reason],
+            "projected_waiting": projected_waiting,
+            "max_waiting": self.max_waiting,
+            "max_running": self.max_running,
+            "native_max_running_requests": self.native_max_running_requests,
+        })
+        return result
+
+    def admit_request(self, req, now, *, is_retracted=False, waiting_count=None):
         """Atomically forecast and reserve one native request.
 
         The caller is the single admission owner.  It must call
         ``release_request`` if a later native enqueue step rolls back.
         """
-        reservation = getattr(req, "governor_reservation", None)
-        if reservation is not None:
-            if reservation.released:
-                raise RuntimeError("Released Governor reservation cannot be reused")
-            return reservation.decision
-        if is_retracted:
-            raise RuntimeError("Retracted request has no Governor reservation")
+        with self._policy_lock:
+            reservation = getattr(req, "governor_reservation", None)
+            if reservation is not None:
+                if reservation.released:
+                    raise RuntimeError("Released Governor reservation cannot be reused")
+                return reservation.decision
+            if is_retracted:
+                raise RuntimeError("Retracted request has no Governor reservation")
 
-        pressure_class = self._request_pressure_class(req)
-        projected_concurrency = min(
-            self.outstanding + 1, self.max_running_requests
-        )
-        projected_pressure = self._projected_pressure_class(pressure_class)
-        decision = self.core.admit(
-            now, projected_concurrency, projected_pressure
-        )
-        if not decision["allowed"]:
+            outstanding_after = self.outstanding + 1
+            logical_projected_waiting = max(
+                0, outstanding_after - self.max_running
+            )
+            if waiting_count is None:
+                # Unit-level and compatibility callers may not have access to
+                # SGLang's separate ordinary/grammar queues. The reservation
+                # ledger still enforces the mutable running/waiting capacity.
+                waiting_before = max(0, self.outstanding - self.max_running)
+            else:
+                if type(waiting_count) is not int or not 0 <= waiting_count < 2**32:
+                    raise ValueError("Invalid waiting_count")
+                waiting_before = waiting_count
+            if waiting_before >= 2**32 - 1:
+                raise ValueError("Waiting count overflow")
+
+            pressure_class = self._request_pressure_class(req)
+            # The TPS surface describes the physical SGLang runnable range. A
+            # lower mutable max_running must never select a lighter TPS cell.
+            projected_concurrency = min(
+                outstanding_after, self.native_max_running_requests
+            )
+            projected_waiting = logical_projected_waiting
+            projected_pressure = self._projected_pressure_class(pressure_class)
+            decision = self._decorate_admission(
+                self.core.admit(now, projected_concurrency, projected_pressure),
+                projected_waiting,
+            )
+            self.last_waiting_count = waiting_before
+            # Keep TPS-first provenance. The waiting limit is evaluated only
+            # after the physical projected cell is fit.
+            if decision["allowed"] and projected_waiting > self.max_waiting:
+                decision["allowed"] = False
+                decision["reason"] = ADMISSION_REASON_WAITING_LIMIT
+                decision["reason_name"] = ADMISSION_REASON_NAMES[
+                    ADMISSION_REASON_WAITING_LIMIT
+                ]
+            if not decision["allowed"]:
+                return decision
+
+            req.governor_reservation = Reservation(self, pressure_class, decision)
+            self.outstanding = outstanding_after
+            self.admitted_pressure_counts[pressure_class] += 1
             return decision
-
-        req.governor_reservation = Reservation(self, pressure_class, decision)
-        self.outstanding += 1
-        self.admitted_pressure_counts[pressure_class] += 1
-        return decision
 
     def release_request(self, req):
         """Release a request-attached reservation exactly once."""
-        reservation = getattr(req, "governor_reservation", None)
-        if reservation is None or reservation.released:
-            return False
-        if self.outstanding <= 0 or self.admitted_pressure_counts[reservation.pressure_class] <= 0:
-            raise RuntimeError("Governor reservation accounting underflow")
-        self.outstanding -= 1
-        self.admitted_pressure_counts[reservation.pressure_class] -= 1
-        reservation.released = True
-        return True
+        with self._policy_lock:
+            reservation = getattr(req, "governor_reservation", None)
+            if reservation is None:
+                return False
+            if reservation.owner is not self:
+                raise RuntimeError("Request belongs to a different Governor owner")
+            if reservation.released:
+                return False
+            if self.outstanding <= 0 or self.admitted_pressure_counts[reservation.pressure_class] <= 0:
+                raise RuntimeError("Governor reservation accounting underflow")
+            self.outstanding -= 1
+            self.admitted_pressure_counts[reservation.pressure_class] -= 1
+            reservation.released = True
+            return True
+
+    def update_policy(self, now, *, expected_epoch, expected_revision, **changes):
+        """Atomically update mutable policy under the Scheduler owner lock."""
+        allowed = {"tps_reference", "max_waiting", "max_running"}
+        if not changes or set(changes) - allowed:
+            raise ValueError("Invalid Governor policy fields")
+        with self._policy_lock:
+            reference = changes.get(
+                "tps_reference", self.core.reference
+            )
+            max_waiting = changes.get("max_waiting", self.max_waiting)
+            max_running = changes.get("max_running", self.max_running)
+            if (
+                type(max_running) is not int
+                or max_running <= 0
+                or max_running > self.native_max_running_requests
+            ):
+                raise ValueError("Invalid Governor max_running")
+            if type(max_waiting) is not int or not 0 <= max_waiting <= MAX_WAITING_LIMIT:
+                raise ValueError("Invalid Governor max_waiting")
+            if max_running + max_waiting >= 2**64:
+                raise ValueError("Governor admission capacity overflow")
+            # The core owns the epoch/revision CAS. Validate every Python field
+            # before this sole mutating call; the assignments below cannot fail.
+            self.core.update_reference(
+                expected_epoch, expected_revision, reference
+            )
+            self.max_running = max_running
+            self.max_waiting = max_waiting
+
+    def policy_snapshot(self, now):
+        with self._policy_lock:
+            snapshot = self.core.snapshot(now)
+            snapshot["mutable"] = {
+                "tps_reference": snapshot["mutable"]["tps_reference"],
+                "max_waiting": self.max_waiting,
+                "max_running": self.max_running,
+            }
+            snapshot["native_max_running_requests"] = (
+                self.native_max_running_requests
+            )
+            return snapshot
 
     def commit_batch(self, updates, now):
         """Commit one native forward batch before publishing state changes."""

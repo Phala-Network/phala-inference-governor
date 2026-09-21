@@ -25,7 +25,7 @@ class PatchManifestTests(unittest.TestCase):
         ]
         self.assertEqual(changed_files, patch["changed_files"])
         self.assertEqual(self.manifest["schema"], "phala.governor-hooks.v2")
-        self.assertEqual(self.manifest["component"]["version"], "0.2.0")
+        self.assertEqual(self.manifest["component"]["version"], "0.2.1")
         self.assertEqual(self.manifest["component"]["abi_version"], 4)
 
     def test_v3_frozen_hook_bytes_remain_retrievable(self):

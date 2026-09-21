@@ -7,6 +7,7 @@ from sglang.srt.runtime_context import get_serving
 from starlette.requests import ClientDisconnect
 from .core import _finite
 from .profile import coverage, validate_profile
+from .scheduler import MAX_WAITING_LIMIT
 
 CONTROL_TIMEOUT = 5.0
 NO_STORE = {"Cache-Control": "no-store"}
@@ -90,10 +91,25 @@ async def endpoint(manager, request):
                     result[name] = value
                 return result
             patch = json.loads(raw, object_pairs_hook=unique)
-            if type(patch) is not dict or set(patch) != {"expected_epoch", "expected_revision", "tps_reference"}:
+            required = {"expected_epoch", "expected_revision"}
+            mutable = {"tps_reference", "max_waiting", "max_running"}
+            keys = set(patch) if type(patch) is dict else set()
+            changes = keys & mutable
+            if (
+                type(patch) is not dict
+                or not changes
+                or not required <= keys
+                or keys - required - mutable
+            ):
                 raise ValueError("invalid fields")
-            value = patch["tps_reference"]
-            _finite(value)
+            if "tps_reference" in changes:
+                _finite(patch["tps_reference"])
+            for name in changes & {"max_waiting", "max_running"}:
+                value = patch[name]
+                minimum = 0 if name == "max_waiting" else 1
+                maximum = MAX_WAITING_LIMIT if name == "max_waiting" else 2**32 - 1
+                if type(value) is not int or not minimum <= value <= maximum:
+                    raise ValueError(f"invalid {name}")
             epoch, revision = patch["expected_epoch"], patch["expected_revision"]
             if type(epoch) is not str or len(epoch) != 32 or any(c not in "0123456789abcdef" for c in epoch):
                 raise ValueError("invalid epoch")

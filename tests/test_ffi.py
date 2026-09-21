@@ -4,7 +4,6 @@ import os
 import unittest
 from unittest import mock
 from pig_governor import Governor, RevisionConflict
-from pig_governor.admin import execute
 from pig_governor.core import ProfileCellV1
 import pig_governor.core as core_module
 
@@ -61,22 +60,20 @@ class NativeAbiTests(unittest.TestCase):
         self.core = Governor(35, max_running_requests=4)
         self.addCleanup(self.core.close)
 
-    def test_real_ffi_window_and_external_policy_contract(self):
+    def test_real_ffi_window_and_reference_cas_contract(self):
         self.core.observe(0, 0, 2)
         self.core.observe(1, 10, 1)
         self.core.observe(3, 4, 0)
-        before = execute(self.core, "get", 3)
+        before = self.core.snapshot(3)
         self.assertEqual(before["decode_tokens"], 14)
         self.assertEqual(before["decode_sequence_seconds"], 4)
-        after = execute(self.core, "patch", 3, {
-            "expected_epoch": before["epoch"], "expected_revision": before["revision"],
-            "tps_reference": 50,
-        })
+        self.core.update_reference(before["epoch"], before["revision"], 50)
+        after = self.core.snapshot(3)
         self.assertEqual(after["revision"], 2)
         self.assertEqual(after["decode_tokens"], before["decode_tokens"])
         self.assertEqual(after["decode_sequence_seconds"], before["decode_sequence_seconds"])
         with self.assertRaises(RevisionConflict):
-            execute(self.core, "patch", 3, {"expected_epoch": before["epoch"], "expected_revision": 1, "tps_reference": 20})
+            self.core.update_reference(before["epoch"], 1, 20)
         with self.assertRaises(RevisionConflict):
             self.core.update_reference("0" * 32, 2, 20)
 
@@ -356,11 +353,7 @@ class NativeAbiTests(unittest.TestCase):
         self.assertTrue(admission["allowed"])
         self.assertEqual(admission["reason"], 1)
         core.observe_surface(1, 100, 1.0, 4, 0)
-        execute(core, "patch", 1, {
-            "expected_epoch": core.epoch,
-            "expected_revision": 1,
-            "tps_reference": 50,
-        })
+        core.update_reference(core.epoch, 1, 50)
         admission = core.admit(1, 4, 0)
         self.assertTrue(admission["allowed"])
         self.assertEqual(admission["reason"], 0)
@@ -406,12 +399,6 @@ class NativeAbiTests(unittest.TestCase):
             with self.subTest(value_sign=value > 0):
                 with self.assertRaises(ValueError):
                     self.core.update_reference(self.core.epoch, before["revision"], value)
-                with self.assertRaises(ValueError):
-                    execute(self.core, "patch", 1, {
-                        "expected_epoch": self.core.epoch,
-                        "expected_revision": before["revision"],
-                        "tps_reference": value,
-                    })
                 self.assertEqual(self.core.snapshot(1), before)
 
 

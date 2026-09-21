@@ -16,7 +16,7 @@
   },
   "component": {
     "repository": "https://github.com/Phala-Network/phala-inference-governor",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "abi_version": 4
   },
   "patches": [
@@ -27,12 +27,12 @@
         "python/sglang/srt/managers/io_struct.py",
         "python/sglang/srt/managers/scheduler.py"
       ],
-      "sha256": "ad06b65add7441d7875ea78ab129830edab720c4b9ce7519236ae7aaefdede15",
+      "sha256": "52087d47d575c95351e17e5335ac6ca5a3d5b6bb63548438502521ca524117ea",
       "source": {
         "repository": "https://github.com/Phala-Network/sglang",
         "parent": "5871a82cb0ef1221126b8c9712881e497041bd38",
-        "commit": "a43a9d30eb9879ec54c607d1d2edfdb5c536bb07",
-        "tree": "0dacab8ac525e59aa02875bfd83c1157637a4bc9"
+        "commit": "354d47922eafa95ebc2d7bd63b7627d780a01c26",
+        "tree": "2733a3bae11d56e4bf3f694fbb49f8e9e156086d"
       }
     }
   ],
@@ -49,7 +49,7 @@
   "validation": {
     "date": "2026-09-21",
     "rust_unit_tests": 28,
-    "python_unittest_tests": 107,
+    "python_unittest_tests": 133,
     "native_sglang_common_tests": 10,
     "component_contract_abi": 4,
     "clean_replay": true,

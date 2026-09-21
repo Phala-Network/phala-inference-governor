@@ -1,7 +1,8 @@
 """Native lifecycle adapter contracts; no SGLang import or GPU dependency."""
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from pig_governor.scheduler import Progress, SchedulerGovernor
+from pig_governor.scheduler import MAX_WAITING_LIMIT, Progress, SchedulerGovernor
 
 
 class Core:
@@ -9,6 +10,9 @@ class Core:
         self.rows = []
         self.allowed = True
         self.last_time = None
+        self.epoch = "1" * 32
+        self.revision = 1
+        self.reference = 50.0
 
     def observe(self, now, delta, active_after):
         if self.last_time is not None and now < self.last_time:
@@ -32,8 +36,21 @@ class Core:
         return {
             "allowed": self.allowed,
             "projected_tps": 100 if self.allowed else 10,
-            "reason": "fit" if self.allowed else "tps_risk",
+            "reason": 0 if self.allowed else 2,
         }
+
+    def snapshot(self, now):
+        return {
+            "epoch": self.epoch,
+            "revision": self.revision,
+            "mutable": {"tps_reference": self.reference},
+        }
+
+    def update_reference(self, epoch, revision, reference):
+        if epoch != self.epoch or revision != self.revision:
+            raise ValueError("conflict")
+        self.reference = float(reference)
+        self.revision += 1
 
     def prefill(self, now, wall):
         self.rows.append(("prefill", now, wall))
@@ -176,15 +193,218 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(adapter.outstanding, 0)
         self.assertFalse(hasattr(req, "governor_reservation"))
 
-    def test_waiting_population_has_no_fixed_governor_cap(self):
+    def test_waiting_limit_allows_three_and_rejects_the_fourth(self):
         core = Core()
-        adapter = SchedulerGovernor(core, max_running_requests=4)
-        reqs = [request(str(index)) for index in range(100)]
-        self.assertTrue(all(adapter.admit_request(req, index)["allowed"] for index, req in enumerate(reqs)))
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=4, max_waiting=3
+        )
+        reqs = [request(str(index)) for index in range(8)]
+        decisions = [
+            adapter.admit_request(req, index) for index, req in enumerate(reqs)
+        ]
+        self.assertTrue(all(decision["allowed"] for decision in decisions[:7]))
+        self.assertFalse(decisions[7]["allowed"])
+        self.assertEqual(decisions[7]["reason_name"], "waiting_limit")
+        self.assertEqual(decisions[7]["reason"], 5)
+        self.assertEqual(decisions[7]["projected_waiting"], 4)
+        self.assertFalse(hasattr(reqs[7], "governor_reservation"))
         projected = [row[2] for row in core.rows if row[0] == "admit"]
         self.assertEqual(projected[:5], [1, 2, 3, 4, 4])
         self.assertEqual(projected[-1], 4)
-        self.assertEqual(adapter.outstanding, 100)
+        self.assertEqual(adapter.outstanding, 7)
+
+    def test_waiting_two_allows_only_one_of_two_same_owner_candidates(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=4, max_waiting=3
+        )
+        for index in range(6):
+            self.assertTrue(adapter.admit_request(request(str(index)), 1)["allowed"])
+        first = adapter.admit_request(request("first-boundary"), 2)
+        second_req = request("second-boundary")
+        second = adapter.admit_request(second_req, 2)
+        self.assertTrue(first["allowed"])
+        self.assertEqual(first["projected_waiting"], 3)
+        self.assertFalse(second["allowed"])
+        self.assertEqual(second["reason_name"], "waiting_limit")
+        self.assertEqual(adapter.outstanding, 7)
+        self.assertFalse(hasattr(second_req, "governor_reservation"))
+
+    def test_concurrent_boundary_candidates_reserve_only_one_slot(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=4, max_waiting=3
+        )
+        for index in range(6):
+            self.assertTrue(adapter.admit_request(request(str(index)), 1)["allowed"])
+        candidates = [request("boundary-a"), request("boundary-b")]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            decisions = list(
+                pool.map(lambda req: adapter.admit_request(req, 2), candidates)
+            )
+        self.assertEqual(sum(decision["allowed"] for decision in decisions), 1)
+        rejected = next(decision for decision in decisions if not decision["allowed"])
+        self.assertEqual(rejected["reason_name"], "waiting_limit")
+        self.assertEqual(adapter.outstanding, 7)
+
+    def test_zero_waiting_limit_allows_running_slots_only(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=2, max_waiting=0
+        )
+        first = adapter.admit_request(request("first"), 1, waiting_count=0)
+        second = adapter.admit_request(request("second"), 1, waiting_count=0)
+        third_req = request("third")
+        third = adapter.admit_request(third_req, 1, waiting_count=0)
+        self.assertTrue(first["allowed"])
+        self.assertTrue(second["allowed"])
+        self.assertEqual(second["projected_waiting"], 0)
+        self.assertFalse(third["allowed"])
+        self.assertEqual(third["projected_waiting"], 1)
+        self.assertEqual(third["reason_name"], "waiting_limit")
+        self.assertFalse(hasattr(third_req, "governor_reservation"))
+
+    def test_explicit_native_waiting_population_is_telemetry_only(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=43)
+        decision = adapter.admit_request(request("candidate"), 1, waiting_count=3)
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["projected_waiting"], 0)
+        self.assertEqual(adapter.last_waiting_count, 3)
+        self.assertEqual(adapter.outstanding, 1)
+
+    def test_reference_zero_still_enforces_logical_capacity(self):
+        core = Core()
+        core.reference = 0.0
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=2, max_waiting=1
+        )
+        decisions = [
+            adapter.admit_request(request(str(index)), 1, waiting_count=0)
+            for index in range(4)
+        ]
+        self.assertTrue(decisions[0]["allowed"])
+        self.assertTrue(decisions[1]["allowed"])
+        self.assertTrue(decisions[2]["allowed"])
+        self.assertEqual(decisions[2]["projected_waiting"], 1)
+        self.assertFalse(decisions[3]["allowed"])
+        self.assertEqual(decisions[3]["reason_name"], "waiting_limit")
+        self.assertEqual(decisions[3]["projected_waiting"], 2)
+        self.assertEqual(adapter.outstanding, 3)
+
+    def test_logical_capacity_is_the_waiting_hard_gate(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=8, max_running=2, max_waiting=0
+        )
+        first = adapter.admit_request(request("first"), 1, waiting_count=0)
+        second = adapter.admit_request(request("second"), 1, waiting_count=3)
+        self.assertEqual(adapter.last_waiting_count, 3)
+        third_req = request("third")
+        third = adapter.admit_request(third_req, 1, waiting_count=0)
+        self.assertEqual(
+            [first["projected_waiting"], second["projected_waiting"]], [0, 0]
+        )
+        self.assertTrue(first["allowed"])
+        self.assertTrue(second["allowed"])
+        self.assertEqual(adapter.last_waiting_count, 0)
+        self.assertFalse(third["allowed"])
+        self.assertEqual(third["reason_name"], "waiting_limit")
+        self.assertEqual(third["projected_waiting"], 1)
+        self.assertFalse(hasattr(third_req, "governor_reservation"))
+
+    def test_waiting_policy_cannot_raise_the_hard_limit(self):
+        core = Core()
+        with self.assertRaises(ValueError):
+            SchedulerGovernor(core, max_running_requests=4, max_waiting=MAX_WAITING_LIMIT + 1)
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        with self.assertRaises(ValueError):
+            adapter.update_policy(
+                1,
+                expected_epoch=core.epoch,
+                expected_revision=core.revision,
+                max_waiting=MAX_WAITING_LIMIT + 1,
+            )
+
+    def test_tps_rejection_keeps_precedence_when_waiting_is_also_over_limit(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=1, max_running=1, max_waiting=1
+        )
+        self.assertTrue(adapter.admit_request(request("fit"), 1)["allowed"])
+        core.allowed = False
+        decision = adapter.admit_request(request("both-red"), 2)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], 2)
+        self.assertEqual(decision["reason_name"], "tps_risk")
+        self.assertEqual(decision["projected_waiting"], 1)
+
+    def test_policy_update_is_atomic_and_uses_native_tps_projection(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=4, max_waiting=3
+        )
+        adapter.update_policy(
+            1,
+            expected_epoch=core.epoch,
+            expected_revision=core.revision,
+            tps_reference=55,
+            max_running=2,
+            max_waiting=1,
+        )
+        self.assertEqual((core.reference, adapter.max_running, adapter.max_waiting), (55.0, 2, 1))
+        for index in range(3):
+            adapter.admit_request(request(str(index)), 2)
+        projected = [row[2] for row in core.rows if row[0] == "admit"]
+        self.assertEqual(projected, [1, 2, 3])
+        self.assertEqual(adapter.outstanding, 3)
+        rejected = adapter.admit_request(request("over"), 2)
+        self.assertFalse(rejected["allowed"])
+        self.assertEqual(rejected["reason_name"], "waiting_limit")
+
+    def test_lowered_limits_do_not_evict_but_block_until_natural_drain(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=4, max_waiting=3
+        )
+        reqs = [request(str(index)) for index in range(4)]
+        for req in reqs:
+            self.assertTrue(adapter.admit_request(req, 1)["allowed"])
+        adapter.update_policy(
+            2,
+            expected_epoch=core.epoch,
+            expected_revision=core.revision,
+            max_running=1,
+            max_waiting=1,
+        )
+        self.assertEqual(adapter.outstanding, 4)
+        self.assertTrue(all(not req.governor_reservation.released for req in reqs))
+        blocked = adapter.admit_request(request("blocked"), 2)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason_name"], "waiting_limit")
+        for req in reqs[:3]:
+            self.assertTrue(adapter.release_request(req))
+        allowed = adapter.admit_request(request("after-drain"), 3)
+        self.assertTrue(allowed["allowed"])
+        self.assertEqual(allowed["projected_waiting"], 1)
+
+    def test_invalid_policy_update_does_not_mutate_any_field(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=4, max_waiting=3
+        )
+        before = (core.reference, core.revision, adapter.max_running, adapter.max_waiting)
+        with self.assertRaises(ValueError):
+            adapter.update_policy(
+                1,
+                expected_epoch=core.epoch,
+                expected_revision=core.revision,
+                max_running=5,
+            )
+        self.assertEqual(
+            (core.reference, core.revision, adapter.max_running, adapter.max_waiting),
+            before,
+        )
 
     def test_retraction_reuses_reservation_and_release_is_exactly_once(self):
         core = Core()
@@ -313,10 +533,14 @@ class LifecycleTests(unittest.TestCase):
 
     def test_reference_zero_admission_still_reserves_for_offline_sampling(self):
         core = Core()
+        core.reference = 0.0
         adapter = SchedulerGovernor(core, max_running_requests=4)
-        req = request("sample")
-        self.assertTrue(adapter.admit_request(req, 1)["allowed"])
-        self.assertEqual(adapter.outstanding, 1)
+        reqs = [request(str(index)) for index in range(8)]
+        decisions = [adapter.admit_request(req, 1) for req in reqs]
+        self.assertTrue(all(decision["allowed"] for decision in decisions[:7]))
+        self.assertFalse(decisions[7]["allowed"])
+        self.assertEqual(decisions[7]["reason_name"], "waiting_limit")
+        self.assertEqual(adapter.outstanding, 7)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from pig_governor.admin import execute
 from pig_governor import http
 from pig_governor.identity import build_runtime_identity
 from pig_governor.profile import build_profile_document, coverage
+from pig_governor.scheduler import SchedulerGovernor
 from sglang.srt.managers.io_struct import SetInternalStateReq
 
 
@@ -143,6 +144,9 @@ class FakeManager:
             api_key=api_key,
         )
         self.core = Governor(35, max_running_requests=4)
+        self.policy = SchedulerGovernor(
+            self.core, max_running_requests=4, max_running=4, max_waiting=3
+        )
         self.now = 3.0
         self.set_started = asyncio.Event()
         self.release_set = asyncio.Event()
@@ -169,7 +173,7 @@ class FakeManager:
         if not isinstance(command, SetInternalStateReq):
             return [False]
         try:
-            execute(self.core, "patch", self.now, command.server_args["pig_governor"])
+            execute(self.policy, "patch", self.now, command.server_args["pig_governor"])
         except (KeyError, RevisionConflict, ValueError):
             return [False]
         return [True]
@@ -180,7 +184,7 @@ class FakeManager:
         await self.release_get.wait()
         if not self.governor_available:
             return [{}]
-        state = {"pig_governor": execute(self.core, "get", self.now)}
+        state = {"pig_governor": execute(self.policy, "get", self.now)}
         if self.profile_available:
             state["pig_governor_profile"] = self.profile
         return [dict(state) for _ in range(self.profile_ranks)]
@@ -254,6 +258,9 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(state["revision"], 1)
         self.assertEqual(state["mutable"]["tps_reference"], 35.0)
+        self.assertEqual(state["mutable"]["max_waiting"], 3)
+        self.assertEqual(state["mutable"]["max_running"], 4)
+        self.assertEqual(state["native_max_running_requests"], 4)
         self.assertEqual(state["reference_semantics"], "soft_target")
 
     async def test_patch_compare_and_swap_keeps_observation_history(self):
@@ -271,8 +278,33 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(self.manager.set_requests[0], SetInternalStateReq)
         self.assertEqual(after["revision"], before["revision"] + 1)
         self.assertEqual(after["mutable"]["tps_reference"], 50.0)
+        self.assertEqual(after["mutable"]["max_waiting"], 3)
+        self.assertEqual(after["mutable"]["max_running"], 4)
         self.assertEqual(after["decode_tokens"], before["decode_tokens"])
         self.assertEqual(after["decode_sequence_seconds"], before["decode_sequence_seconds"])
+
+    async def test_patch_updates_all_three_policy_fields_in_one_revision(self):
+        before = document(await self.get())
+        body = json.dumps({
+            "expected_epoch": before["epoch"],
+            "expected_revision": before["revision"],
+            "tps_reference": 48,
+            "max_waiting": 2,
+            "max_running": 3,
+        }).encode("utf-8")
+        response = await self.patch({}, body=body)
+        after = document(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(after["revision"], before["revision"] + 1)
+        self.assertEqual(after["mutable"], {
+            "tps_reference": 48.0,
+            "max_waiting": 2,
+            "max_running": 3,
+        })
+
+        stale = await self.patch({}, body=body)
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(document(await self.get())["mutable"], after["mutable"])
 
     async def test_patch_rejects_a_stale_epoch_without_changing_policy(self):
         before = document(await self.get())
@@ -299,12 +331,54 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
                 patch_body(valid["epoch"], valid["revision"], 50)[:-1] +
                 b',"unexpected":1}'
             ),
+            "empty_change": json.dumps({
+                "expected_epoch": valid["epoch"],
+                "expected_revision": valid["revision"],
+            }).encode("utf-8"),
+            "boolean_limit": json.dumps({
+                "expected_epoch": valid["epoch"],
+                "expected_revision": valid["revision"],
+                "max_waiting": True,
+            }).encode("utf-8"),
+            "negative_limit": json.dumps({
+                "expected_epoch": valid["epoch"],
+                "expected_revision": valid["revision"],
+                "max_waiting": -1,
+            }).encode("utf-8"),
         }
         for name, body in invalid_bodies.items():
             with self.subTest(name=name):
                 response = await self.patch({}, body=body)
                 self.assertEqual(response.status_code, 400)
         self.assertEqual(self.manager.set_calls, 0)
+
+    async def test_patch_rejects_max_waiting_above_hard_bound_before_dispatch(self):
+        before = document(await self.get())
+        body = json.dumps({
+            "expected_epoch": before["epoch"],
+            "expected_revision": before["revision"],
+            "max_waiting": 4,
+        }).encode("utf-8")
+        response = await self.patch({}, body=body)
+        after = document(await self.get())
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.manager.set_calls, 0)
+        self.assertEqual(after["revision"], before["revision"])
+        self.assertEqual(after["mutable"], before["mutable"])
+
+    async def test_patch_rejects_max_running_above_native_bound_in_scheduler(self):
+        before = document(await self.get())
+        body = json.dumps({
+            "expected_epoch": before["epoch"],
+            "expected_revision": before["revision"],
+            "max_running": 5,
+        }).encode("utf-8")
+        response = await self.patch({}, body=body)
+        after = document(await self.get())
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.manager.set_calls, 1)
+        self.assertEqual(after["revision"], before["revision"])
+        self.assertEqual(after["mutable"], before["mutable"])
 
     async def test_patch_rejects_oversized_body_before_scheduler_dispatch(self):
         body = b"{" + b"x" * 4096 + b"}"

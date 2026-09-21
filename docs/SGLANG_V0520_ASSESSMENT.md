@@ -68,7 +68,8 @@ matching the updated native middleware.
 The post-result hook still belongs after native result processors and before
 _record_step_counters. Req remains extensible and output_ids_through_stop retains
 the required committed-output semantics. Keep native cache/chunk-abort processing
-ahead of any Governor prefill-defer decision.
+ahead of any Governor prefill-defer decision. The later 0.2.1 policy adds the
+Scheduler-owned post-admit waiting gate without changing this ordering.
 
 The request-correlated control_nonce fix is still needed: upstream
 communicator.py has no equivalent correlation mechanism. Preserve payload types,
@@ -99,7 +100,8 @@ version dependence in dynamic method wrappers.
 After adaptation, run native-module and control/cleanup tests, then the real
 model/TAIL chain on the approved development CVM with exact recovery and three
 fresh drains. Preserve TP1/PP1/DP1, non-overlap, no PD, soft average TPS and no
-new rejection conditions. Broader topology support remains separate work.
+the authenticated mutable TPS/running/waiting policy. Broader topology support
+remains separate work.
 
 
 ## Benefit boundaries and retained downstream work
