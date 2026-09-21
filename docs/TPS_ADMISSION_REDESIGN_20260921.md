@@ -217,8 +217,9 @@ and the discarded static TAIL semaphore are not part of this design.
 
 The local implementation now uses ABI v3 and a bounded response surface:
 
-- `pig_governor_observe_surface(now, delta, duration, concurrency, pressure_class)`
-  records real Decode evidence in the target cell.
+- `pig_governor_observe_surface(now, delta, sequence_seconds, concurrency, pressure_class)`
+  records real Decode evidence in the target cell. The mass is assigned to the
+  observation bucket; it is never treated as elapsed wall-time or capped at 60.
 - `pig_governor_admit(now, projected_concurrency, pressure_class)` consults the exact
   projected cell first, then only a jointly heavier qualified cell.
 - The Scheduler keeps `outstanding/admitted_pressure_counts` separate from

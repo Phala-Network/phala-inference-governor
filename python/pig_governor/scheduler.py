@@ -126,7 +126,7 @@ class SchedulerGovernor:
         entering = [0, 0, 0, 0]
         leaving = [0, 0, 0, 0]
         total_delta = 0
-        total_duration = 0.0
+        total_sequence_seconds = 0.0
         proposed = []
 
         for progress, output_tokens, terminal, pressure_class in updates:
@@ -164,7 +164,7 @@ class SchedulerGovernor:
                 leaving[pressure_class] += 1
 
             total_delta += delta
-            total_duration += duration
+            total_sequence_seconds += duration
             new_decoding = (progress.decoding or entering_request) and not terminal
             new_last_time = now if new_decoding else None
             proposed.append((
@@ -180,9 +180,9 @@ class SchedulerGovernor:
             if pressure_after[index] < 0:
                 raise RuntimeError("Active pressure accounting underflow")
 
-        if active_before > 0 and (total_delta or total_duration):
+        if active_before > 0 and (total_delta or total_sequence_seconds):
             self.core.observe_batch(
-                now, total_delta, total_duration, active_before,
+                now, total_delta, total_sequence_seconds, active_before,
                 active_pressure_before, active_after
             )
         else:

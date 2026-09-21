@@ -47,14 +47,17 @@ class NativeAbiTests(unittest.TestCase):
     def test_atomic_batch_observation_updates_surface_and_window(self):
         core = Governor(50, max_running_requests=4)
         self.addCleanup(core.close)
-        core.observe_batch(1, 100, 1.0, 1, 0, 1)
+        # Duration is total sequence-seconds, not elapsed wall-time. At four
+        # concurrent sequences this must retain all four seconds even at t=1.
+        core.observe_batch(1, 160, 4.0, 4, 0, 4)
         state = core.snapshot(1)
-        self.assertEqual(state["decode_tokens"], 100)
-        self.assertEqual(state["decode_sequence_seconds"], 1.0)
-        admission = core.admit(1, 1, 0)
-        self.assertTrue(admission["allowed"])
-        self.assertEqual(admission["reason"], 0)
-        self.assertEqual(admission["evidence_concurrency"], 1)
+        self.assertEqual(state["decode_tokens"], 160)
+        self.assertEqual(state["decode_sequence_seconds"], 4.0)
+        admission = core.admit(1, 4, 0)
+        self.assertFalse(admission["allowed"])
+        self.assertEqual(admission["reason"], 2)
+        self.assertEqual(admission["projected_tps"], 40.0)
+        self.assertEqual(admission["evidence_concurrency"], 4)
 
     def test_surface_heavier_cell_is_safe_but_lighter_cell_is_not(self):
         core = Governor(50, max_running_requests=4)

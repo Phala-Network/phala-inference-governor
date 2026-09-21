@@ -126,29 +126,23 @@ impl SurfaceCell {
         Ok((tokens, seconds))
     }
 
-    fn observe(&mut self, now: f64, delta: u64, duration: f64) -> Result<()> {
-        let duration = duration.min(WINDOW_SECONDS);
-        let start = (now - duration).max(0.0);
-        let mut cursor = start;
-        while cursor < now {
-            let index = tick(cursor);
-            let end = (((index + 1) as f64) * BUCKET_SECONDS).min(now);
-            if end <= cursor {
-                return Err(INVALID);
-            }
-            let segment = end - cursor;
-            self.bucket(index).seconds += segment;
-            cursor = end;
+    fn observe(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
+        if !nonnegative(sequence_seconds) {
+            return Err(INVALID);
         }
-        self.bucket(tick(now)).tokens = self
-            .bucket(tick(now))
-            .tokens
-            .checked_add(delta)
-            .ok_or(INVALID)?;
-        self.exposure_seconds += duration;
+        let bucket = self.bucket(tick(now));
+        bucket.seconds += sequence_seconds;
+        if !bucket.seconds.is_finite() {
+            return Err(INVALID);
+        }
+        bucket.tokens = bucket.tokens.checked_add(delta).ok_or(INVALID)?;
+        self.exposure_seconds += sequence_seconds;
+        if !self.exposure_seconds.is_finite() {
+            return Err(INVALID);
+        }
         self.last_time = Some(now);
         let (_, recent_seconds) = self.evidence(now, WINDOW_SECONDS)?;
-        if duration > 0.0 && recent_seconds >= MIN_EXPOSURE_SECONDS {
+        if sequence_seconds > 0.0 && recent_seconds >= MIN_EXPOSURE_SECONDS {
             self.last_qualified = Some(now);
         }
         Ok(())
@@ -275,28 +269,16 @@ impl State {
         Ok((tokens, seconds))
     }
 
-    fn record_window(&mut self, now: f64, delta: u64, duration: f64) -> Result<()> {
-        if !nonnegative(duration) {
+    fn record_window(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
+        if !nonnegative(sequence_seconds) {
             return Err(INVALID);
         }
-        let duration = duration.min(WINDOW_SECONDS);
-        let start = (now - duration).max(0.0);
-        let mut cursor = start;
-        while cursor < now {
-            let index = tick(cursor);
-            let end = (((index + 1) as f64) * BUCKET_SECONDS).min(now);
-            if end <= cursor {
-                return Err(INVALID);
-            }
-            let segment = end - cursor;
-            self.bucket(index).seconds += segment;
-            cursor = end;
+        let bucket = self.bucket(tick(now));
+        bucket.seconds += sequence_seconds;
+        if !bucket.seconds.is_finite() {
+            return Err(INVALID);
         }
-        self.bucket(tick(now)).tokens = self
-            .bucket(tick(now))
-            .tokens
-            .checked_add(delta)
-            .ok_or(INVALID)?;
+        bucket.tokens = bucket.tokens.checked_add(delta).ok_or(INVALID)?;
         Ok(())
     }
 
@@ -317,14 +299,14 @@ impl State {
         &mut self,
         now: f64,
         delta: u64,
-        duration: f64,
+        sequence_seconds: f64,
         concurrency: u32,
         pressure_class: u32,
     ) -> Result<()> {
         if concurrency == 0
             || concurrency > self.max_running_requests
             || pressure_class >= PRESSURE_CLASSES
-            || !nonnegative(duration)
+            || !nonnegative(sequence_seconds)
         {
             return Err(INVALID);
         }
@@ -333,7 +315,7 @@ impl State {
             .surface
             .entry((concurrency, pressure_class))
             .or_insert_with(SurfaceCell::new);
-        cell.observe(now, delta, duration)?;
+        cell.observe(now, delta, sequence_seconds)?;
         self.observed = true;
         Ok(())
     }
@@ -342,7 +324,7 @@ impl State {
         &mut self,
         now: f64,
         delta: u64,
-        duration: f64,
+        sequence_seconds: f64,
         concurrency: u32,
         pressure_class: u32,
         active_after: u64,
@@ -350,7 +332,7 @@ impl State {
         if concurrency == 0
             || concurrency > self.max_running_requests
             || pressure_class >= PRESSURE_CLASSES
-            || !nonnegative(duration)
+            || !nonnegative(sequence_seconds)
         {
             return Err(INVALID);
         }
@@ -361,8 +343,8 @@ impl State {
             .surface
             .entry((concurrency, pressure_class))
             .or_insert_with(SurfaceCell::new);
-        cell.observe(now, delta, duration)?;
-        next.record_window(now, delta, duration)?;
+        cell.observe(now, delta, sequence_seconds)?;
+        next.record_window(now, delta, sequence_seconds)?;
         next.active = active_after;
         next.observed = true;
         *self = next;
@@ -629,13 +611,13 @@ pub unsafe extern "C" fn pig_governor_observe_surface(
     handle: *mut Governor,
     now: f64,
     delta: u64,
-    duration: f64,
+    sequence_seconds: f64,
     concurrency: u32,
     pressure_class: u32,
 ) -> i32 {
     guarded(|| {
         transaction(handle, |state| {
-            state.observe_surface(now, delta, duration, concurrency, pressure_class)
+            state.observe_surface(now, delta, sequence_seconds, concurrency, pressure_class)
         })
     })
 }
@@ -645,7 +627,7 @@ pub unsafe extern "C" fn pig_governor_observe_batch(
     handle: *mut Governor,
     now: f64,
     delta: u64,
-    duration: f64,
+    sequence_seconds: f64,
     concurrency: u32,
     pressure_class: u32,
     active_after: u64,
@@ -655,7 +637,7 @@ pub unsafe extern "C" fn pig_governor_observe_batch(
             state.observe_batch(
                 now,
                 delta,
-                duration,
+                sequence_seconds,
                 concurrency,
                 pressure_class,
                 active_after,
@@ -769,6 +751,21 @@ mod tests {
         assert_eq!(admission.evidence_concurrency, 4);
         assert_eq!(admission.evidence_pressure_class, 0);
         assert!((admission.projected_tps - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn batch_sequence_seconds_are_mass_not_elapsed_wall_time() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_batch(1.0, 160, 4.0, 4, 0, 4).unwrap();
+        let snapshot = s.snapshot(1.0).unwrap();
+        assert_eq!(snapshot.tokens_60s, 160);
+        assert_eq!(snapshot.sequence_seconds_60s, 4.0);
+        assert_eq!(snapshot.tokens_2s, 160);
+        assert_eq!(snapshot.sequence_seconds_2s, 4.0);
+        let admission = s.admission(1.0, 4, 0).unwrap();
+        assert_eq!(admission.allowed, 0);
+        assert_eq!(admission.reason, ADMISSION_TPS_RISK);
+        assert_eq!(admission.projected_tps, 40.0);
     }
 
     #[test]

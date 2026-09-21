@@ -148,24 +148,24 @@ class Governor:
     def observe(self, now, committed_decode_delta, active_after):
         self._call("observe", _finite(now), _integer(committed_decode_delta), _integer(active_after))
 
-    def observe_surface(self, now, committed_decode_delta, duration,
+    def observe_surface(self, now, committed_decode_delta, sequence_seconds,
                         concurrency, pressure_class):
         self._call(
             "observe_surface",
             _finite(now),
             _integer(committed_decode_delta),
-            _finite(duration),
+            _finite(sequence_seconds),
             _concurrency(concurrency),
             _pressure_class(pressure_class),
         )
 
-    def observe_batch(self, now, committed_decode_delta, duration,
+    def observe_batch(self, now, committed_decode_delta, sequence_seconds,
                       concurrency, pressure_class, active_after):
         self._call(
             "observe_batch",
             _finite(now),
             _integer(committed_decode_delta),
-            _finite(duration),
+            _finite(sequence_seconds),
             _concurrency(concurrency),
             _pressure_class(pressure_class),
             _integer(active_after),

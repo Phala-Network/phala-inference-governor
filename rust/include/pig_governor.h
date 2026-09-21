@@ -13,9 +13,11 @@ extern "C" {
  * All times use one monotonic seconds clock.
  * Buckets quantize the oldest window edge by less than 0.5 seconds.
  * Python owns epoch checks, request lifecycle and exactly-once Decode deltas.
- * Snapshot/choose accrue actual time using the preceding active count.
+ * Snapshot/choose accrue time using the preceding active count; observe_batch
+ * supplies the same interval explicitly and never double-counts it.
  * choose output: 0 native, 1 bounded Decode preference (never admission).
  * observe_surface records one real Decode cell before state transition.
+ * duration arguments are total Decode sequence-seconds, not elapsed wall-time.
  * observe_batch commits surface and aggregate observations in one transaction.
  */
 typedef struct PigGovernor PigGovernor;
@@ -56,11 +58,11 @@ int32_t pig_governor_free(PigGovernor *handle);
 int32_t pig_governor_observe(PigGovernor *handle, double now, uint64_t delta,
                            uint64_t active_after);
 int32_t pig_governor_observe_surface(PigGovernor *handle, double now,
-                                      uint64_t delta, double duration,
+                                      uint64_t delta, double sequence_seconds,
                                       uint32_t concurrency,
                                       uint32_t pressure_class);
 int32_t pig_governor_observe_batch(PigGovernor *handle, double now,
-                                  uint64_t delta, double duration,
+                                  uint64_t delta, double sequence_seconds,
                                   uint32_t concurrency,
                                   uint32_t pressure_class,
                                   uint64_t active_after);
