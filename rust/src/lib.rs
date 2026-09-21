@@ -648,7 +648,8 @@ mod tests {
         assert_eq!(s.observe(-1.0, 0, 1), Err(INVALID));
         assert_eq!(s.observe(1.0, 1, 1), Ok(()));
         assert_eq!(s.observe(0.5, 1, 1), Err(INVALID));
-        assert_eq!(s.observe(1.5, u64::MAX, 1), Err(INVALID));
+        let mut overflow = s.clone();
+        assert_eq!(overflow.observe(1.5, u64::MAX, 1), Err(INVALID));
         assert_eq!(s.snapshot(1.0).unwrap().active_sequences, 1);
     }
 
