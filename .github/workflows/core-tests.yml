@@ -81,7 +81,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: governor-library
-          path: ${{ runner.temp }}
+          path: .artifacts
       - name: Apply Governor hooks to the pinned clean SGLang base
         shell: bash
         run: |
@@ -98,7 +98,21 @@ jobs:
       - name: Run Python integration tests against the patched SGLang base
         shell: bash
         env:
-          PYTHONPATH: ${{ github.workspace }}/sglang-clean-base/python:${{ github.workspace }}/python
-          PIG_GOVERNOR_LIBRARY: ${{ runner.temp }}/libpig_governor_core.so
           PYTHONDONTWRITEBYTECODE: '1'
-        run: python -m unittest discover -s tests -p test_*.py -v
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/sglang-clean-base/python:$GITHUB_WORKSPACE/python"
+          export PIG_GOVERNOR_LIBRARY="$GITHUB_WORKSPACE/.artifacts/libpig_governor_core.so"
+          python - <<'PY'
+          import os
+          import pig_governor
+
+          expected = os.path.realpath(
+              os.path.join(os.environ["GITHUB_WORKSPACE"], "python", "pig_governor", "__init__.py")
+          )
+          actual = os.path.realpath(pig_governor.__file__)
+          if actual != expected:
+              raise RuntimeError(f"Imported Governor from {actual}, expected {expected}")
+          if not os.path.isfile(os.environ["PIG_GOVERNOR_LIBRARY"]):
+              raise RuntimeError("Downloaded Governor library is missing")
+          PY
+          python -m unittest discover -s tests -p test_*.py -v
