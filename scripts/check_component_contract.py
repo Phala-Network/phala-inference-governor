@@ -73,6 +73,15 @@ def main():
             require(core.snapshot(3) == after, "invalid reference mutated controller")
         checks.append("invalid_reference_rejected_without_mutation")
 
+        admission = core.admit(3, 1, 0)
+        require(admission["reason"] == 4, "missing surface evidence must be unknown")
+        core.observe_surface(3, 100, 1.0, 1, 0)
+        admission = core.admit(3, 1, 0)
+        require(admission["allowed"] is True, "safe exact surface cell was rejected")
+        require(admission["reason"] == 0, "safe exact surface reason differs")
+        require(admission["evidence_concurrency"] == 1, "surface evidence concurrency differs")
+        checks.append("response_surface_admission_contract")
+
         core.close()
         rejected(lambda: core.snapshot(3), RuntimeError)
         checks.append("closed_handle_rejected")
@@ -87,7 +96,7 @@ def main():
             "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
             "scope": "Private real-library CPU handle; no HTTP, model, live policy or image identity acceptance.",
         }
-        require(result["abi_version"] == 1, "unexpected ABI")
+        require(result["abi_version"] == 2, "unexpected ABI")
         print(json.dumps(result, sort_keys=True))
     finally:
         core.close()
@@ -95,4 +104,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

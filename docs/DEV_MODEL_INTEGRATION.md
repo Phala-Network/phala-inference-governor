@@ -32,7 +32,7 @@ Use the tested prebuilt Rust library and Python package with:
 
 - PIG_GOVERNOR_ENABLE=1
 - PIG_GOVERNOR_LIBRARY set to the absolute mounted shared-library path
-- PIG_TPS_REFERENCE=35
+- PIG_TPS_REFERENCE=50
 - Python import path containing the mounted plugin package
 
 Remove only the obsolete native-QoS CLI options: tps-reference,

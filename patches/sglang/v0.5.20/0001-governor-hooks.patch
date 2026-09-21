@@ -1,6 +1,8 @@
+diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
+index 388371a145..6aac387297 100644
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
-@@ -816,6 +816,16 @@
+@@ -816,6 +816,16 @@ async def get_server_info():
      return await server_info()
  
  
@@ -17,9 +19,11 @@
  @app.get("/server_info")
  async def server_info():
      """The startup configuration, plus live scheduler state.
+diff --git a/python/sglang/srt/managers/io_struct.py b/python/sglang/srt/managers/io_struct.py
+index 6f1cf54b9f..f9e4a53d01 100644
 --- a/python/sglang/srt/managers/io_struct.py
 +++ b/python/sglang/srt/managers/io_struct.py
-@@ -2113,8 +2113,8 @@
+@@ -2113,8 +2113,8 @@ class GetInternalStateReqOutput(BaseReq, kw_only=True):
  
  
  class SetInternalStateReq(BaseReq, kw_only=True):
@@ -30,9 +34,11 @@
      control_nonce: Optional[str] = None
  
  
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index 9f5bc8c165..371be7f6a0 100644
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
-@@ -466,6 +466,11 @@
+@@ -466,6 +466,11 @@ class Scheduler(
  
          # Parse args
          self.server_args = server_args
@@ -44,7 +50,7 @@
          self.nccl_port = port_args.nccl_port
          self.schedule_policy = get_schedule().schedule_policy
          self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
-@@ -1340,7 +1345,11 @@
+@@ -1340,7 +1345,11 @@ class Scheduler(
          if sizer.profile_and_fit():
              self.dynamic_chunk_sizer = sizer
  
@@ -57,7 +63,70 @@
          if self._prefill_decode_interval_remaining == 0:
              return False
  
-@@ -3654,7 +3663,7 @@
+@@ -3062,6 +3071,13 @@ class Scheduler(
+                 self._add_request_to_queue(req)
+                 return
+ 
++        if (
++            self.governor is not None
++            and self.disaggregation_mode == DisaggregationMode.NULL
++            and self._abort_on_governor_admission(req)
++        ):
++            return
++
+         added_to_grammar_queue = self.grammar_manager.process_req_with_grammar(req)
+         if not added_to_grammar_queue:
+             self._add_request_to_queue(req)
+@@ -3198,6 +3214,11 @@ class Scheduler(
+             req.storage_prefetch_last_match_len = None
+             req.staged_prefetch_plan = None
+         if self.disaggregation_mode == DisaggregationMode.NULL:
++            if self.governor is not None and not req.finished():
++                if getattr(req, "governor_reservation", None) is None:
++                    raise RuntimeError(
++                        "Valid request reached native queue without Governor reservation"
++                    )
+             if self._abort_on_queued_limit(req):
+                 return
+             self._prefetch_kvcache(req)
+@@ -3219,6 +3240,36 @@ class Scheduler(
+         else:
+             raise ValueError(f"Invalid {self.disaggregation_mode=}")
+ 
++    def _abort_on_governor_admission(self, req: Req) -> bool:
++        """Reject before native queue insertion when the TPS forecast is unsafe."""
++        if self.governor is None:
++            return False
++        decision = self.governor.admit_request(req, time.monotonic())
++        if decision["allowed"]:
++            return False
++        message = "The request is rejected by Governor TPS admission."
++        logger.info(
++            "Governor TPS admission rejected rid=%s projected_tps=%.6f reference=%.6f "
++            "projected_concurrency=%d pressure_class=%d active=%d",
++            req.rid,
++            decision["projected_tps"],
++            decision["reference"],
++            decision["projected_concurrency"],
++            decision["pressure_class"],
++            decision["active_decode_sequences"],
++        )
++        abort_req = _make_abort_req(
++            req,
++            finished_reason={
++                "type": "abort",
++                "status_code": HTTPStatus.TOO_MANY_REQUESTS,
++                "message": message,
++            },
++        )
++        req.time_stats.trace_ctx.abort(abort_info={"reason": message})
++        self.ipc_channels.send_to_tokenizer.send_output(abort_req, req)
++        return True
++
+     def _reject_sampling_mask_request(self, req: Req, error_msg: str) -> None:
+         """Return a sampling-mask validation error without running the model."""
+         logger.error(f"{error_msg}, {req.rid=}")
+@@ -3654,7 +3705,7 @@ class Scheduler(
  
          if self.dllm_config is not None:
              new_batch = self.get_new_batch_dllm(running_batch)
@@ -66,7 +135,7 @@
              new_batch = None
          else:
              prefill_plan = self.get_new_batch_prefill(running_batch)
-@@ -4627,6 +4636,8 @@
+@@ -4632,6 +4683,8 @@ class Scheduler(
          elif batch.forward_mode.is_idle():
              self.batch_result_processor.process_batch_result_idle(batch, result)
  
@@ -75,16 +144,17 @@
          self._record_step_counters(batch, result)
  
          self.metrics_reporter.log_batch_result_stats(batch, result)
-@@ -5018,6 +5029,8 @@
+@@ -5023,6 +5076,9 @@ class Scheduler(
          # Resolved config (pristine server_args + post-publish overrides) so a
          # readback reflects values changed via /set_internal_state, not startup.
          ret = get_context().resolved_server_args_dict()
 +        if self.governor is not None:
 +            ret["pig_governor"] = self.governor.core.snapshot(time.monotonic())
++            ret["pig_governor_admission"] = self.governor.admission_snapshot()
          ret["world_size"] = compute_world_size(
              enable_dp_attention=get_parallel().enable_dp_attention,
              dp_size=get_parallel().dp_size,
-@@ -5077,6 +5090,14 @@
+@@ -5082,6 +5138,14 @@ class Scheduler(
  
      def set_internal_state(self, recv_req: SetInternalStateReq):
          server_args_dict = recv_req.server_args
@@ -99,7 +169,7 @@
          args_allow_update = set(
              [
                  "pp_max_micro_batch_size",
-@@ -5891,6 +5912,10 @@
+@@ -5896,6 +5960,10 @@ def run_scheduler_process(
  def _make_abort_req(
      req: Req, finished_reason: Optional[FinishReasonDict] = None
  ) -> AbortReq:
@@ -110,3 +180,8 @@
      return AbortReq(
          rid=req.rid,
          finished_reason=finished_reason,
+@@ -5905,3 +5973,4 @@ def _make_abort_req(
+             num_output_tokens=len(req.output_ids),
+         ),
+     )
++

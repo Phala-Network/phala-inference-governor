@@ -42,6 +42,7 @@ PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代
 - Rust 核只处理真实 Decode tokens/序列秒数和有界调度建议；不拥有 Req、KV/cache、tensor、ACK 或资源释放权，不把预测 token 写入实测窗口。
 - Python 接入复用原生生命周期、控制 IPC；worker 同步、真实分配和取消清理由 SGLang 原生路径拥有。
 - TAIL 的信任/TEE 边界保持独立；旧全预测、日志、资格门等实验实现不机械迁入 Rust。原 A–F 中仍有意义的性能、资源与可信链验证继续保留，不能用旧测试数量替代新架构验收。
+- 2026-09-21 admission redesign supersedes the old aggregate forecast: decisions use the response surface in [TPS_ADMISSION_REDESIGN_20260921.md](TPS_ADMISSION_REDESIGN_20260921.md).
 
 ## 历史实施与验证（用于追溯，当前分仓进度以上方为准）
 

@@ -26,7 +26,7 @@ class NativeSchedulerTests(unittest.TestCase):
         self.core = Governor(35)
         self.addCleanup(self.core.close)
         self.sched = object.__new__(Scheduler)
-        self.sched.governor = SglangGovernor(self.core)
+        self.sched.governor = SglangGovernor(self.core, max_running_requests=43)
 
     def test_real_msgspec_cas_dispatch(self):
         before = self.core.snapshot(time.monotonic())
@@ -134,6 +134,66 @@ class NativeSchedulerTests(unittest.TestCase):
                 else:
                     mm.release_features.assert_not_called()
                     self.assertIs(req.multimodal_inputs, mm)
+
+
+class GovernorHookTests(unittest.TestCase):
+    def _scheduler(self):
+        sched = object.__new__(Scheduler)
+        sched.governor = object()
+        sched.disaggregation_mode = DisaggregationMode.NULL
+        sched.waiting_queue = []
+        sched.processed_tokens_counter = 0
+        sched._set_or_validate_priority = lambda req: True
+        sched._abort_on_queued_limit = lambda req: False
+        sched._prefetch_kvcache = lambda req: None
+        return sched
+
+    def test_add_request_to_queue_requires_governor_reservation(self):
+        sched = self._scheduler()
+        req = SimpleNamespace(
+            rid='admitted',
+            finished=lambda: False,
+            time_stats=SimpleNamespace(set_wait_queue_entry_time=lambda: None),
+            governor_reservation=object(),
+        )
+        sched._add_request_to_queue(req)
+        self.assertIn(req, sched.waiting_queue)
+
+        unadmitted = SimpleNamespace(
+            rid='unadmitted',
+            finished=lambda: False,
+            time_stats=SimpleNamespace(set_wait_queue_entry_time=lambda: None),
+        )
+        with self.assertRaisesRegex(RuntimeError, 'without Governor reservation'):
+            sched._add_request_to_queue(unadmitted)
+
+    def test_governor_admission_reject_returns_429_before_queue_insertion(self):
+        sched = self._scheduler()
+        sent = []
+        sched.ipc_channels = SimpleNamespace(
+            send_to_tokenizer=SimpleNamespace(send_output=lambda abort, req: sent.append((abort, req)))
+        )
+        sched.governor = SimpleNamespace(
+            admit_request=lambda req, now: {
+                'allowed': False,
+                'projected_tps': 10.0,
+                'reference': 50.0,
+                'projected_concurrency': 4,
+                'pressure_class': 0,
+                'active_decode_sequences': 0,
+            }
+        )
+        req = SimpleNamespace(
+            rid='risk',
+            output_ids=[],
+            finished=lambda: False,
+            time_stats=SimpleNamespace(trace_ctx=SimpleNamespace(abort=lambda abort_info: None)),
+        )
+        with patch('sglang.srt.managers.scheduler.time.monotonic', return_value=1.0):
+            self.assertTrue(sched._abort_on_governor_admission(req))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0].finished_reason['status_code'], 429)
+        self.assertEqual(sched.waiting_queue, [])
 
 
 if __name__ == '__main__': unittest.main()

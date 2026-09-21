@@ -39,7 +39,7 @@ Runtime configuration:
 ```text
 PIG_GOVERNOR_ENABLE=1
 PIG_GOVERNOR_LIBRARY=/absolute/image/path/libpig_governor_core.so
-PIG_TPS_REFERENCE=35
+PIG_TPS_REFERENCE=50
 ```
 
 Production uses the official `sglang serve` command. With the supplied auth patch,
@@ -53,6 +53,14 @@ redacts keys without altering runtime configuration or internal IPC.
 Authenticated `GET/PATCH /admin/v1/predictive-policy` reads and updates the soft
 `tps_reference`. PATCH requires `expected_epoch` and `expected_revision` for CAS.
 A successful hot update neither restarts the model nor resets actual history.
+`tps_reference=0` is the explicit C2 offline sampling mode; a CAS update from 0
+to the production reference preserves the learned response surface.
+
+Admission is TPS-first and occurs before SGLang's grammar or ordinary waiting
+queue. It forecasts the candidate's projected `(Decode concurrency, context
+pressure)` cell from measured per-user Decode evidence, and returns HTTP 429 when
+that cell is unqualified or falls below the reference. There is no fixed waiting
+or inflight cap; waiting is not itself a rejection condition.
 The Rust core has no third-party dependencies; its versioned C ABI is loaded by
 ctypes from a prebuilt library, without runtime Cargo builds.
 

@@ -13,7 +13,7 @@
         "python/sglang/srt/managers/io_struct.py",
         "python/sglang/srt/managers/scheduler.py"
       ],
-      "sha256": "ebf6d2a2e8ef4c9a2c768803cbaf50eda7fc580ae0c888b9aff85297ef34b1a6"
+      "sha256": "690d511ebc002a02eac7961e4717741dc3d0a52f09e10180b47c8eb7f527b7c1"
     }
   ],
   "model_patches_required": false,
