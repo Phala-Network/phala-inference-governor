@@ -49,6 +49,7 @@ class NativeAbiTests(unittest.TestCase):
         self.addCleanup(core.close)
         # Duration is total sequence-seconds, not elapsed wall-time. At four
         # concurrent sequences this must retain all four seconds even at t=1.
+        core.observe(0, 0, 4)
         core.observe_batch(1, 160, 4.0, 4, 0, 4)
         state = core.snapshot(1)
         self.assertEqual(state["decode_tokens"], 160)
@@ -73,7 +74,7 @@ class NativeAbiTests(unittest.TestCase):
         self.assertFalse(admission["allowed"])
         self.assertEqual(admission["reason"], 2)
         self.assertEqual(admission["projected_tps"], 40.0)
-        self.assertEqual(admission["active_sequences"], 1)
+        self.assertEqual(admission["active_decode_sequences"], 1)
 
     def test_surface_heavier_cell_is_safe_but_lighter_cell_is_not(self):
         core = Governor(50, max_running_requests=4)

@@ -43,6 +43,7 @@ class SchedulerGovernor:
         self.admitted_pressure_counts = [0, 0, 0, 0]
         self.active_pressure_counts = [0, 0, 0, 0]
         self._pending_evidence = {}
+        self._surface_time = None
 
     @classmethod
     def _request_pressure_class(cls, req):
@@ -127,7 +128,6 @@ class SchedulerGovernor:
         entering = [0, 0, 0, 0]
         leaving = [0, 0, 0, 0]
         total_delta = 0
-        total_sequence_seconds = 0.0
         proposed = []
 
         for progress, output_tokens, terminal, pressure_class in updates:
@@ -145,14 +145,12 @@ class SchedulerGovernor:
                 raise ValueError("Committed output cannot go backwards; use terminated for abort")
 
             delta = 0
-            duration = 0.0
             entering_request = False
             if progress.decoding:
                 delta = output_tokens - progress.output_tokens
                 if progress.last_time is None:
                     raise RuntimeError("Decoding progress lacks an observation clock")
-                duration = now - progress.last_time
-                if duration < 0:
+                if now < progress.last_time:
                     raise ValueError("Observation clock went backwards")
             else:
                 delta = max(0, output_tokens - 1)
@@ -165,7 +163,6 @@ class SchedulerGovernor:
                 leaving[pressure_class] += 1
 
             total_delta += delta
-            total_sequence_seconds += duration
             new_decoding = (progress.decoding or entering_request) and not terminal
             new_last_time = now if new_decoding else None
             proposed.append((
@@ -180,6 +177,14 @@ class SchedulerGovernor:
             pressure_after[index] += entering[index] - leaving[index]
             if pressure_after[index] < 0:
                 raise RuntimeError("Active pressure accounting underflow")
+
+        if self._surface_time is None:
+            elapsed = 0.0
+        else:
+            elapsed = now - self._surface_time
+            if elapsed < 0:
+                raise ValueError("Observation clock went backwards")
+        total_sequence_seconds = elapsed * active_before
 
         pending_evidence = {
             key: value for key, value in self._pending_evidence.items()
@@ -219,6 +224,7 @@ class SchedulerGovernor:
         self.active = active_after
         self.active_pressure_counts = pressure_after
         self._pending_evidence = pending_evidence
+        self._surface_time = now
 
     def committed(self, progress, now, output_tokens, *, terminal=False,
                   pressure_class=0):

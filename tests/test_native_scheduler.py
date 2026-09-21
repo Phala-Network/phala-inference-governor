@@ -167,6 +167,28 @@ class GovernorHookTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'without Governor reservation'):
             sched._add_request_to_queue(unadmitted)
 
+    def test_native_validation_abort_bypasses_governor_reservation(self):
+        sched = self._scheduler()
+        sampling_params = SamplingParams(max_new_tokens=1)
+        sampling_params.normalize(None)
+        req = Req(
+            rid='invalid-before-admission',
+            origin_input_text='',
+            origin_input_ids=array('q', [1]),
+            sampling_params=sampling_params,
+        )
+        with patch(
+            'sglang.srt.managers.schedule_batch.get_parallel',
+            return_value=SimpleNamespace(tp_rank=1),
+        ):
+            req.set_finish_with_abort('prompt is too long')
+
+        self.assertFalse(req.finished())
+        self.assertIsInstance(req.to_finish, FINISH_ABORT)
+        sched._add_request_to_queue(req)
+        self.assertIn(req, sched.waiting_queue)
+        self.assertIsNone(getattr(req, 'governor_reservation', None))
+
     def test_abort_releases_queued_reservation_without_progress(self):
         core = Governor(0, max_running_requests=43)
         self.addCleanup(core.close)
@@ -182,8 +204,8 @@ class GovernorHookTests(unittest.TestCase):
         governor.admit_request(req, 1)
         self.assertEqual(governor.outstanding, 1)
         with patch(
-            'sglang.srt.managers.scheduler.compute_weight_version_spans',
-            return_value=[],
+            'sglang.srt.managers.scheduler.get_serving',
+            return_value=SimpleNamespace(weight_version='v0'),
         ):
             _make_abort_req(req)
         self.assertEqual(governor.outstanding, 0)
@@ -192,6 +214,9 @@ class GovernorHookTests(unittest.TestCase):
     def test_governor_admission_reject_returns_429_before_queue_insertion(self):
         sched = self._scheduler()
         sent = []
+        sched._prefetch_kvcache = Mock()
+        sched.grammar_manager = Mock()
+        sched.tp_worker = Mock()
         sched.ipc_channels = SimpleNamespace(
             send_to_tokenizer=SimpleNamespace(send_output=lambda abort, req: sent.append((abort, req)))
         )
@@ -205,16 +230,29 @@ class GovernorHookTests(unittest.TestCase):
                 'active_decode_sequences': 0,
             }
         )
-        req = SimpleNamespace(
+        sampling_params = SamplingParams(max_new_tokens=1)
+        sampling_params.normalize(None)
+        req = Req(
             rid='risk',
-            output_ids=[],
-            finished=lambda: False,
-            time_stats=SimpleNamespace(trace_ctx=SimpleNamespace(abort=lambda abort_info: None)),
+            origin_input_text='',
+            origin_input_ids=array('q', [1]),
+            sampling_params=sampling_params,
         )
-        with patch('sglang.srt.managers.scheduler.time.monotonic', return_value=1.0):
+        req.multimodal_inputs = Mock()
+        features = req.multimodal_inputs
+        req.time_stats.trace_ctx = SimpleNamespace(abort=Mock())
+        with patch(
+            'sglang.srt.managers.scheduler.get_serving',
+            return_value=SimpleNamespace(weight_version='v0'),
+        ), patch('sglang.srt.managers.scheduler.time.monotonic', return_value=1.0):
             self.assertTrue(sched._abort_on_governor_admission(req))
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0][0].finished_reason['status_code'], 429)
+        features.release_features.assert_called_once_with()
+        self.assertIsNone(req.multimodal_inputs)
+        sched._prefetch_kvcache.assert_not_called()
+        sched.grammar_manager.process_req_with_grammar.assert_not_called()
+        sched.tp_worker.assert_not_called()
         self.assertEqual(sched.waiting_queue, [])
 
 

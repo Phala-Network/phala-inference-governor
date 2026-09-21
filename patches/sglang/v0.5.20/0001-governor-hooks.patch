@@ -77,19 +77,23 @@ index 9f5bc8c165..2b1d9a6abc 100644
          added_to_grammar_queue = self.grammar_manager.process_req_with_grammar(req)
          if not added_to_grammar_queue:
              self._add_request_to_queue(req)
-@@ -3198,6 +3214,11 @@ class Scheduler(
+@@ -3198,6 +3214,15 @@ class Scheduler(
              req.storage_prefetch_last_match_len = None
              req.staged_prefetch_plan = None
          if self.disaggregation_mode == DisaggregationMode.NULL:
-+            if self.governor is not None and not req.finished():
-+                if getattr(req, "governor_reservation", None) is None:
++            if self.governor is not None:
++                native_terminal = req.finished() or getattr(req, "to_finish", None) is not None
++                if (
++                    not native_terminal
++                    and getattr(req, "governor_reservation", None) is None
++                ):
 +                    raise RuntimeError(
 +                        "Valid request reached native queue without Governor reservation"
 +                    )
              if self._abort_on_queued_limit(req):
                  return
              self._prefetch_kvcache(req)
-@@ -3219,6 +3240,36 @@ class Scheduler(
+@@ -3219,6 +3244,39 @@ class Scheduler(
          else:
              raise ValueError(f"Invalid {self.disaggregation_mode=}")
  
@@ -111,6 +115,9 @@ index 9f5bc8c165..2b1d9a6abc 100644
 +            decision["pressure_class"],
 +            decision["active_decode_sequences"],
 +        )
++        if req.multimodal_inputs is not None and req.session is None:
++            req.multimodal_inputs.release_features()
++        req.multimodal_inputs = None
 +        abort_req = _make_abort_req(
 +            req,
 +            finished_reason={
@@ -126,7 +133,7 @@ index 9f5bc8c165..2b1d9a6abc 100644
      def _reject_sampling_mask_request(self, req: Req, error_msg: str) -> None:
          """Return a sampling-mask validation error without running the model."""
          logger.error(f"{error_msg}, {req.rid=}")
-@@ -3654,7 +3705,7 @@ class Scheduler(
+@@ -3654,7 +3712,7 @@ class Scheduler(
  
          if self.dllm_config is not None:
              new_batch = self.get_new_batch_dllm(running_batch)
@@ -135,7 +142,7 @@ index 9f5bc8c165..2b1d9a6abc 100644
              new_batch = None
          else:
              prefill_plan = self.get_new_batch_prefill(running_batch)
-@@ -4632,6 +4683,8 @@ class Scheduler(
+@@ -4632,6 +4690,8 @@ class Scheduler(
          elif batch.forward_mode.is_idle():
              self.batch_result_processor.process_batch_result_idle(batch, result)
  
@@ -144,7 +151,7 @@ index 9f5bc8c165..2b1d9a6abc 100644
          self._record_step_counters(batch, result)
  
          self.metrics_reporter.log_batch_result_stats(batch, result)
-@@ -5023,6 +5076,9 @@ class Scheduler(
+@@ -5023,6 +5083,9 @@ class Scheduler(
          # Resolved config (pristine server_args + post-publish overrides) so a
          # readback reflects values changed via /set_internal_state, not startup.
          ret = get_context().resolved_server_args_dict()
@@ -154,7 +161,7 @@ index 9f5bc8c165..2b1d9a6abc 100644
          ret["world_size"] = compute_world_size(
              enable_dp_attention=get_parallel().enable_dp_attention,
              dp_size=get_parallel().dp_size,
-@@ -5082,6 +5138,14 @@ class Scheduler(
+@@ -5082,6 +5145,14 @@ class Scheduler(
  
      def set_internal_state(self, recv_req: SetInternalStateReq):
          server_args_dict = recv_req.server_args
@@ -169,7 +176,7 @@ index 9f5bc8c165..2b1d9a6abc 100644
          args_allow_update = set(
              [
                  "pp_max_micro_batch_size",
-@@ -5896,6 +5960,10 @@ def run_scheduler_process(
+@@ -5896,6 +5967,10 @@ def run_scheduler_process(
  def _make_abort_req(
      req: Req, finished_reason: Optional[FinishReasonDict] = None
  ) -> AbortReq:
@@ -180,8 +187,3 @@ index 9f5bc8c165..2b1d9a6abc 100644
      return AbortReq(
          rid=req.rid,
          finished_reason=finished_reason,
-@@ -5905,3 +5973,4 @@ def _make_abort_req(
-             num_output_tokens=len(req.output_ids),
-         ),
-     )
-+

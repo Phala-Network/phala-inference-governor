@@ -13,8 +13,9 @@ extern "C" {
  * All times use one monotonic seconds clock.
  * Buckets quantize the oldest window edge by less than 0.5 seconds.
  * Python owns epoch checks, request lifecycle and exactly-once Decode deltas.
- * Snapshot/choose accrue time using the preceding active count; observe_batch
- * supplies the same interval explicitly and never double-counts it.
+ * Snapshot/choose and observe_batch accrue aggregate time from the preceding
+ * active count. observe_batch uses explicit sequence-seconds only for the
+ * response-surface cell, so an intervening snapshot cannot double-count time.
  * choose output: 0 native, 1 bounded Decode preference (never admission).
  * observe_surface records one real Decode cell before state transition.
  * duration arguments are total Decode sequence-seconds, not elapsed wall-time.
