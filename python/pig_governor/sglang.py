@@ -25,7 +25,10 @@ def create(server_args):
     if max_running_requests is None:
         raise ValueError("Governor requires resolved native max_running_requests")
     return SglangGovernor(
-        Governor(float(os.environ.get("PIG_TPS_REFERENCE", "50"))),
+        Governor(
+            float(os.environ.get("PIG_TPS_REFERENCE", "50")),
+            max_running_requests=max_running_requests,
+        ),
         max_running_requests=max_running_requests,
     )
 

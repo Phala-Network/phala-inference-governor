@@ -62,6 +62,12 @@ def _concurrency(value):
     return value
 
 
+def _max_running_requests(value):
+    if type(value) is not int or not 1 <= value < 2**32:
+        raise ValueError("Expected positive 32-bit native max running requests")
+    return value
+
+
 def _pressure_class(value):
     if type(value) is not int or not 0 <= value < 4:
         raise ValueError("Expected context-pressure class 0..3")
@@ -70,7 +76,7 @@ def _pressure_class(value):
 
 class Governor:
     """Own one controller handle, never an SGLang Req, tensor, or KV page."""
-    def __init__(self, reference, *, library=None):
+    def __init__(self, reference, *, max_running_requests, library=None):
         path = library or os.environ.get("PIG_GOVERNOR_LIBRARY")
         if not path or not os.path.isabs(path):
             raise ValueError("PIG_GOVERNOR_LIBRARY must name an absolute library path")
@@ -80,12 +86,17 @@ class Governor:
         self.epoch = uuid.uuid4().hex
         definitions = {
             "abi_version": ([], C.c_uint32),
-            "new": ([C.c_double, C.POINTER(C.c_void_p)], C.c_int32),
+            "new": ([C.c_double, C.c_uint32, C.POINTER(C.c_void_p)], C.c_int32),
             "free": ([C.c_void_p], C.c_int32),
             "observe": ([C.c_void_p, C.c_double, C.c_uint64, C.c_uint64], C.c_int32),
             "observe_surface": (
                 [C.c_void_p, C.c_double, C.c_uint64, C.c_double,
                  C.c_uint32, C.c_uint32],
+                C.c_int32,
+            ),
+            "observe_batch": (
+                [C.c_void_p, C.c_double, C.c_uint64, C.c_double,
+                 C.c_uint32, C.c_uint32, C.c_uint64],
                 C.c_int32,
             ),
             "prefill": ([C.c_void_p, C.c_double, C.c_double], C.c_int32),
@@ -105,9 +116,13 @@ class Governor:
         for name, (arguments, result) in definitions.items():
             function = getattr(self._lib, "pig_governor_" + name)
             function.argtypes, function.restype = arguments, result
-        if self._lib.pig_governor_abi_version() != 2:
+        if self._lib.pig_governor_abi_version() != 3:
             raise RuntimeError("Unsupported Governor ABI")
-        self._check(self._lib.pig_governor_new(_finite(reference), C.byref(self._handle)))
+        self._check(self._lib.pig_governor_new(
+            _finite(reference),
+            _max_running_requests(max_running_requests),
+            C.byref(self._handle),
+        ))
 
     @staticmethod
     def _check(status):
@@ -133,15 +148,27 @@ class Governor:
     def observe(self, now, committed_decode_delta, active_after):
         self._call("observe", _finite(now), _integer(committed_decode_delta), _integer(active_after))
 
-    def observe_surface(self, now, committed_decode_delta, duration,
+    def observe_surface(self, now, committed_decode_delta, sequence_seconds,
                         concurrency, pressure_class):
         self._call(
             "observe_surface",
             _finite(now),
             _integer(committed_decode_delta),
-            _finite(duration),
+            _finite(sequence_seconds),
             _concurrency(concurrency),
             _pressure_class(pressure_class),
+        )
+
+    def observe_batch(self, now, committed_decode_delta, sequence_seconds,
+                      concurrency, pressure_class, active_after):
+        self._call(
+            "observe_batch",
+            _finite(now),
+            _integer(committed_decode_delta),
+            _finite(sequence_seconds),
+            _concurrency(concurrency),
+            _pressure_class(pressure_class),
+            _integer(active_after),
         )
 
     def prefill(self, now, wall):
@@ -162,7 +189,7 @@ class Governor:
     def snapshot(self, now):
         result = Snapshot()
         self._call("snapshot", _finite(now), C.byref(result))
-        if result.abi_version != 2:
+        if result.abi_version != 3:
             raise RuntimeError("Incompatible snapshot ABI")
         seconds = result.sequence_seconds_60s
         return {
@@ -192,7 +219,7 @@ class Governor:
                 _pressure_class(pressure_class),
                 C.byref(result),
             ))
-        if result.abi_version != 2:
+        if result.abi_version != 3:
             raise RuntimeError("Incompatible admission ABI")
         return {
             "allowed": bool(result.allowed),

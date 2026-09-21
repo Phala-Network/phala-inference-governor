@@ -35,7 +35,7 @@ index 6f1cf54b9f..f9e4a53d01 100644
  
  
 diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
-index 9f5bc8c165..371be7f6a0 100644
+index 9f5bc8c165..2b1d9a6abc 100644
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
 @@ -466,6 +466,11 @@ class Scheduler(
@@ -173,7 +173,7 @@ index 9f5bc8c165..371be7f6a0 100644
  def _make_abort_req(
      req: Req, finished_reason: Optional[FinishReasonDict] = None
  ) -> AbortReq:
-+    if getattr(req, "governor_progress", None) is not None:
++    if getattr(req, "governor_progress", None) is not None or getattr(req, "governor_reservation", None) is not None:
 +        from pig_governor.sglang import on_abort_emitted
 +
 +        on_abort_emitted(req)

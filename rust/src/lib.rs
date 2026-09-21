@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 pub const OK: i32 = 0;
 pub const INVALID: i32 = 1;
 pub const CONFLICT: i32 = 2;
@@ -126,38 +126,31 @@ impl SurfaceCell {
         Ok((tokens, seconds))
     }
 
-    fn observe(&mut self, now: f64, delta: u64, duration: f64) -> Result<()> {
-        let duration = duration.min(WINDOW_SECONDS);
-        let start = (now - duration).max(0.0);
-        let mut cursor = start;
-        while cursor < now {
-            let index = tick(cursor);
-            let end = (((index + 1) as f64) * BUCKET_SECONDS).min(now);
-            if end <= cursor {
-                return Err(INVALID);
-            }
-            let segment = end - cursor;
-            self.bucket(index).seconds += segment;
-            cursor = end;
+    fn observe(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
+        if !nonnegative(sequence_seconds) || (delta > 0 && sequence_seconds == 0.0) {
+            return Err(INVALID);
         }
-        self.bucket(tick(now)).tokens = self
-            .bucket(tick(now))
-            .tokens
-            .checked_add(delta)
-            .ok_or(INVALID)?;
-        self.exposure_seconds += duration;
+        let bucket = self.bucket(tick(now));
+        bucket.seconds += sequence_seconds;
+        if !bucket.seconds.is_finite() {
+            return Err(INVALID);
+        }
+        bucket.tokens = bucket.tokens.checked_add(delta).ok_or(INVALID)?;
+        self.exposure_seconds += sequence_seconds;
+        if !self.exposure_seconds.is_finite() {
+            return Err(INVALID);
+        }
         self.last_time = Some(now);
-        if self.exposure_seconds >= MIN_EXPOSURE_SECONDS {
+        let (_, recent_seconds) = self.evidence(now, WINDOW_SECONDS)?;
+        if sequence_seconds > 0.0 && recent_seconds >= MIN_EXPOSURE_SECONDS {
             self.last_qualified = Some(now);
         }
         Ok(())
     }
 
     fn qualified(&self, now: f64) -> bool {
-        self.exposure_seconds >= MIN_EXPOSURE_SECONDS
-            && self
-                .last_qualified
-                .is_some_and(|qualified| now - qualified <= MAX_SURFACE_AGE_SECONDS)
+        self.last_qualified
+            .is_some_and(|qualified| now - qualified <= MAX_SURFACE_AGE_SECONDS)
     }
 
     fn lower_bound(&self, now: f64) -> Result<Option<f64>> {
@@ -185,6 +178,7 @@ impl SurfaceCell {
 #[derive(Clone)]
 struct State {
     buckets: [Bucket; BUCKETS],
+    max_running_requests: u32,
     last_time: Option<f64>,
     observed: bool,
     active: u64,
@@ -205,12 +199,13 @@ fn tick(now: f64) -> i64 {
 }
 
 impl State {
-    fn new(reference: f64) -> Result<Self> {
-        if !nonnegative(reference) {
+    fn new(reference: f64, max_running_requests: u32) -> Result<Self> {
+        if max_running_requests == 0 || !nonnegative(reference) {
             return Err(INVALID);
         }
         Ok(Self {
             buckets: [EMPTY; BUCKETS],
+            max_running_requests,
             last_time: None,
             observed: false,
             active: 0,
@@ -232,13 +227,17 @@ impl State {
     }
 
     fn advance(&mut self, now: f64) -> Result<()> {
+        self.advance_clock(now, true)
+    }
+
+    fn advance_clock(&mut self, now: f64, accumulate_active: bool) -> Result<()> {
         if !nonnegative(now) || now >= MAX_CLOCK || self.last_time.is_some_and(|last| now < last) {
             return Err(INVALID);
         }
         if let Some(last) = self.last_time {
             let oldest = (tick(now - WINDOW_SECONDS) as f64 * BUCKET_SECONDS).max(0.0);
             let mut start = last.max(oldest);
-            while self.active > 0 && start < now {
+            while accumulate_active && self.active > 0 && start < now {
                 let index = tick(start);
                 let end = (((index + 1) as f64) * BUCKET_SECONDS).min(now);
                 if end <= start {
@@ -270,6 +269,19 @@ impl State {
         Ok((tokens, seconds))
     }
 
+    fn record_window(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
+        if !nonnegative(sequence_seconds) || (delta > 0 && sequence_seconds == 0.0) {
+            return Err(INVALID);
+        }
+        let bucket = self.bucket(tick(now));
+        bucket.seconds += sequence_seconds;
+        if !bucket.seconds.is_finite() {
+            return Err(INVALID);
+        }
+        bucket.tokens = bucket.tokens.checked_add(delta).ok_or(INVALID)?;
+        Ok(())
+    }
+
     fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
         self.advance(now)?;
         self.bucket(tick(now)).tokens = self
@@ -287,11 +299,16 @@ impl State {
         &mut self,
         now: f64,
         delta: u64,
-        duration: f64,
+        sequence_seconds: f64,
         concurrency: u32,
         pressure_class: u32,
     ) -> Result<()> {
-        if concurrency == 0 || pressure_class >= PRESSURE_CLASSES || !nonnegative(duration) {
+        if concurrency == 0
+            || concurrency > self.max_running_requests
+            || pressure_class >= PRESSURE_CLASSES
+            || !nonnegative(sequence_seconds)
+            || (delta > 0 && sequence_seconds == 0.0)
+        {
             return Err(INVALID);
         }
         self.advance(now)?;
@@ -299,8 +316,40 @@ impl State {
             .surface
             .entry((concurrency, pressure_class))
             .or_insert_with(SurfaceCell::new);
-        cell.observe(now, delta, duration)?;
+        cell.observe(now, delta, sequence_seconds)?;
         self.observed = true;
+        Ok(())
+    }
+
+    fn observe_batch(
+        &mut self,
+        now: f64,
+        delta: u64,
+        sequence_seconds: f64,
+        concurrency: u32,
+        pressure_class: u32,
+        active_after: u64,
+    ) -> Result<()> {
+        if concurrency == 0
+            || concurrency > self.max_running_requests
+            || pressure_class >= PRESSURE_CLASSES
+            || !nonnegative(sequence_seconds)
+            || (delta > 0 && sequence_seconds == 0.0)
+        {
+            return Err(INVALID);
+        }
+
+        let mut next = self.clone();
+        next.advance_clock(now, false)?;
+        let cell = next
+            .surface
+            .entry((concurrency, pressure_class))
+            .or_insert_with(SurfaceCell::new);
+        cell.observe(now, delta, sequence_seconds)?;
+        next.record_window(now, delta, sequence_seconds)?;
+        next.active = active_after;
+        next.observed = true;
+        *self = next;
         Ok(())
     }
 
@@ -354,7 +403,10 @@ impl State {
         projected_concurrency: u32,
         pressure_class: u32,
     ) -> Result<Admission> {
-        if projected_concurrency == 0 || pressure_class >= PRESSURE_CLASSES {
+        if projected_concurrency == 0
+            || projected_concurrency > self.max_running_requests
+            || pressure_class >= PRESSURE_CLASSES
+        {
             return Err(INVALID);
         }
         self.advance(now)?;
@@ -518,12 +570,16 @@ pub extern "C" fn pig_governor_abi_version() -> u32 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pig_governor_new(reference: f64, out: *mut *mut Governor) -> i32 {
+pub unsafe extern "C" fn pig_governor_new(
+    reference: f64,
+    max_running_requests: u32,
+    out: *mut *mut Governor,
+) -> i32 {
     guarded(|| {
         if out.is_null() {
             return Err(INVALID);
         }
-        let state = State::new(reference)?;
+        let state = State::new(reference, max_running_requests)?;
         *out = Box::into_raw(Box::new(Governor {
             state: Mutex::new(state),
         }));
@@ -557,13 +613,37 @@ pub unsafe extern "C" fn pig_governor_observe_surface(
     handle: *mut Governor,
     now: f64,
     delta: u64,
-    duration: f64,
+    sequence_seconds: f64,
     concurrency: u32,
     pressure_class: u32,
 ) -> i32 {
     guarded(|| {
         transaction(handle, |state| {
-            state.observe_surface(now, delta, duration, concurrency, pressure_class)
+            state.observe_surface(now, delta, sequence_seconds, concurrency, pressure_class)
+        })
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pig_governor_observe_batch(
+    handle: *mut Governor,
+    now: f64,
+    delta: u64,
+    sequence_seconds: f64,
+    concurrency: u32,
+    pressure_class: u32,
+    active_after: u64,
+) -> i32 {
+    guarded(|| {
+        transaction(handle, |state| {
+            state.observe_batch(
+                now,
+                delta,
+                sequence_seconds,
+                concurrency,
+                pressure_class,
+                active_after,
+            )
         })
     })
 }
@@ -644,7 +724,7 @@ mod tests {
 
     #[test]
     fn aggregate_window_rejects_clock_and_token_regressions() {
-        let mut s = State::new(100.0).unwrap();
+        let mut s = State::new(100.0, 4).unwrap();
         assert_eq!(s.observe(-1.0, 0, 1), Err(INVALID));
         assert_eq!(s.observe(1.0, 1, 1), Ok(()));
         assert_eq!(s.observe(0.5, 1, 1), Err(INVALID));
@@ -655,7 +735,7 @@ mod tests {
 
     #[test]
     fn aggregate_first_token_is_excluded_by_python_but_bucket_counts_delta() {
-        let mut s = State::new(100.0).unwrap();
+        let mut s = State::new(100.0, 4).unwrap();
         s.observe(0.0, 0, 1).unwrap();
         s.observe(1.0, 1, 1).unwrap();
         let snapshot = s.snapshot(1.0).unwrap();
@@ -665,7 +745,7 @@ mod tests {
 
     #[test]
     fn surface_observation_creates_exact_cell_and_windows() {
-        let mut s = State::new(50.0).unwrap();
+        let mut s = State::new(50.0, 4).unwrap();
         s.observe_surface(1.0, 100, 1.0, 4, 0).unwrap();
         let admission = s.admission(1.0, 4, 0).unwrap();
         assert_eq!(admission.allowed, 1);
@@ -676,8 +756,23 @@ mod tests {
     }
 
     #[test]
+    fn batch_sequence_seconds_are_mass_not_elapsed_wall_time() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_batch(1.0, 160, 4.0, 4, 0, 4).unwrap();
+        let snapshot = s.snapshot(1.0).unwrap();
+        assert_eq!(snapshot.tokens_60s, 160);
+        assert_eq!(snapshot.sequence_seconds_60s, 4.0);
+        assert_eq!(snapshot.tokens_2s, 160);
+        assert_eq!(snapshot.sequence_seconds_2s, 4.0);
+        let admission = s.admission(1.0, 4, 0).unwrap();
+        assert_eq!(admission.allowed, 0);
+        assert_eq!(admission.reason, ADMISSION_TPS_RISK);
+        assert_eq!(admission.projected_tps, 40.0);
+    }
+
+    #[test]
     fn exact_unsafe_cell_is_risk_even_with_zero_waiting() {
-        let mut s = State::new(50.0).unwrap();
+        let mut s = State::new(50.0, 4).unwrap();
         s.observe_surface(1.0, 20, 1.0, 1, 0).unwrap();
         let admission = s.admission(1.0, 1, 0).unwrap();
         assert_eq!(admission.allowed, 0);
@@ -687,7 +782,7 @@ mod tests {
 
     #[test]
     fn heavier_cell_can_supply_conservative_bound() {
-        let mut s = State::new(50.0).unwrap();
+        let mut s = State::new(50.0, 4).unwrap();
         s.observe_surface(1.0, 100, 1.0, 4, 1).unwrap();
         let admission = s.admission(1.0, 1, 0).unwrap();
         assert_eq!(admission.allowed, 1);
@@ -697,7 +792,7 @@ mod tests {
 
     #[test]
     fn lighter_cell_never_extrapolates_upward() {
-        let mut s = State::new(50.0).unwrap();
+        let mut s = State::new(50.0, 4).unwrap();
         s.observe_surface(1.0, 100, 1.0, 1, 0).unwrap();
         let admission = s.admission(1.0, 2, 0).unwrap();
         assert_eq!(admission.allowed, 0);
@@ -707,7 +802,7 @@ mod tests {
 
     #[test]
     fn reference_zero_samples_and_cas_preserves_surface() {
-        let mut s = State::new(0.0).unwrap();
+        let mut s = State::new(0.0, 4).unwrap();
         let admission = s.admission(1.0, 4, 0).unwrap();
         assert_eq!(admission.allowed, 1);
         assert_eq!(admission.reason, ADMISSION_REFERENCE_DISABLED);
@@ -720,8 +815,66 @@ mod tests {
     }
 
     #[test]
+    fn zero_sequence_token_observation_cannot_raise_surface() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 4, 0.1, 1, 0).unwrap();
+        let before = s.admission(1.0, 1, 0).unwrap();
+        assert_eq!(before.reason, ADMISSION_TPS_RISK);
+        assert_eq!(before.projected_tps, 40.0);
+
+        assert_eq!(s.observe_surface(1.1, 1000, 0.0, 1, 0), Err(INVALID));
+        let after = s.admission(1.1, 1, 0).unwrap();
+        assert_eq!(after.reason, ADMISSION_TPS_RISK);
+        assert_eq!(after.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn zero_sequence_tokens_cannot_pollute_long_only_fallback() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 4, 0.1, 1, 0).unwrap();
+        let before = s.admission(3.6, 1, 0).unwrap();
+        assert_eq!(before.reason, ADMISSION_TPS_RISK);
+        assert_eq!(before.projected_tps, 40.0);
+        assert_eq!(s.observe_surface(3.6, 1000, 0.0, 1, 0), Err(INVALID));
+        let after = s.admission(3.6, 1, 0).unwrap();
+        assert_eq!(after.reason, ADMISSION_TPS_RISK);
+        assert_eq!(after.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn invalid_zero_sequence_batch_is_fully_atomic() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_batch(1.0, 4, 0.1, 1, 0, 1).unwrap();
+        let before = s.snapshot(1.0).unwrap();
+        assert_eq!(s.observe_batch(1.1, 1000, 0.0, 1, 0, 4), Err(INVALID));
+        let after = s.snapshot(1.0).unwrap();
+        assert_eq!(after, before);
+        let admission = s.admission(1.1, 1, 0).unwrap();
+        assert_eq!(admission.reason, ADMISSION_TPS_RISK);
+        assert_eq!(admission.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn zero_duration_without_tokens_does_not_extend_surface_qualification() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 100, 0.1, 1, 0).unwrap();
+        s.observe_surface(59.0, 0, 0.0, 1, 0).unwrap();
+        let admission = s.admission(62.0, 1, 0).unwrap();
+        assert_eq!(admission.reason, ADMISSION_UNKNOWN);
+    }
+
+    #[test]
+    fn aged_surface_requires_fresh_minimum_exposure() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 100, 0.1, 1, 0).unwrap();
+        s.observe_surface(80.0, 1000, 0.001, 1, 0).unwrap();
+        let admission = s.admission(80.0, 1, 0).unwrap();
+        assert_eq!(admission.reason, ADMISSION_UNKNOWN);
+    }
+
+    #[test]
     fn stale_or_insufficient_surface_is_unknown() {
-        let mut s = State::new(50.0).unwrap();
+        let mut s = State::new(50.0, 4).unwrap();
         let admission = s.admission(1.0, 1, 0).unwrap();
         assert_eq!(admission.reason, ADMISSION_UNKNOWN);
 
@@ -739,7 +892,7 @@ mod tests {
 
     #[test]
     fn preference_is_short_ages_and_never_reanchors_to_evaluation() {
-        let mut s = State::new(100.0).unwrap();
+        let mut s = State::new(100.0, 4).unwrap();
         s.observe(0.0, 0, 1).unwrap();
         s.observe(10.0, 10, 1).unwrap();
         s.prefill(10.0, 0.5).unwrap();
@@ -756,7 +909,7 @@ mod tests {
     fn ffi_invalid_calls_and_cas_preserve_actual_history() {
         unsafe {
             let mut h = std::ptr::null_mut();
-            assert_eq!(pig_governor_new(30.0, &mut h), OK);
+            assert_eq!(pig_governor_new(30.0, 4, &mut h), OK);
             assert_eq!(pig_governor_observe(h, 0.0, 0, 1), OK);
             assert_eq!(pig_governor_observe(h, 1.0, 12, 1), OK);
             let mut before = Snapshot::default();
@@ -765,6 +918,10 @@ mod tests {
             assert_eq!(pig_governor_admit(h, 1.0, 1, 0, &mut admission), OK);
             assert_eq!(admission.abi_version, ABI_VERSION);
             assert_eq!(pig_governor_observe_surface(h, 1.0, 10, 1.0, 1, 0), OK);
+            assert_eq!(
+                pig_governor_observe_batch(h, 2.0, 10, 1.0, 5, 0, 1),
+                INVALID
+            );
             assert_eq!(pig_governor_observe(h, 0.5, 10, 9), INVALID);
             assert_eq!(pig_governor_observe(h, f64::NAN, 10, 9), INVALID);
             assert_eq!(pig_governor_observe(h, MAX_CLOCK, 10, 9), INVALID);
@@ -799,10 +956,11 @@ mod tests {
     fn abi_rejects_nulls_and_bad_creation_without_touching_outputs() {
         unsafe {
             let mut h = std::ptr::null_mut();
-            assert_eq!(pig_governor_abi_version(), 2);
-            assert_eq!(pig_governor_new(-1.0, &mut h), INVALID);
+            assert_eq!(pig_governor_abi_version(), 3);
+            assert_eq!(pig_governor_new(-1.0, 4, &mut h), INVALID);
+            assert_eq!(pig_governor_new(30.0, 0, &mut h), INVALID);
             assert!(h.is_null());
-            assert_eq!(pig_governor_new(30.0, std::ptr::null_mut()), INVALID);
+            assert_eq!(pig_governor_new(30.0, 4, std::ptr::null_mut()), INVALID);
             assert_eq!(pig_governor_snapshot(h, 0.0, std::ptr::null_mut()), INVALID);
             assert_eq!(
                 pig_governor_admit(h, 0.0, 1, 0, std::ptr::null_mut()),

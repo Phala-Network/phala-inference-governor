@@ -29,7 +29,7 @@ def rejected(operation, exception):
 
 
 def main():
-    core = Governor(35)
+    core = Governor(35, max_running_requests=4)
     checks = []
     try:
         core.observe(0, 0, 2)
@@ -75,12 +75,24 @@ def main():
 
         admission = core.admit(3, 1, 0)
         require(admission["reason"] == 4, "missing surface evidence must be unknown")
+        rejected(lambda: core.observe_surface(3, 1, 1.0, 5, 0), ValueError)
+        rejected(lambda: core.admit(3, 5, 0), ValueError)
         core.observe_surface(3, 100, 1.0, 1, 0)
         admission = core.admit(3, 1, 0)
         require(admission["allowed"] is True, "safe exact surface cell was rejected")
         require(admission["reason"] == 0, "safe exact surface reason differs")
         require(admission["evidence_concurrency"] == 1, "surface evidence concurrency differs")
         checks.append("response_surface_admission_contract")
+
+        batch_core = Governor(50, max_running_requests=4)
+        try:
+            batch_core.observe_batch(3, 100, 1.0, 1, 0, 1)
+            batch_admission = batch_core.admit(3, 1, 0)
+            require(batch_admission["allowed"] is True, "atomic batch surface was rejected")
+            require(batch_admission["reason"] == 0, "atomic batch reason differs")
+            checks.append("atomic_batch_observation_contract")
+        finally:
+            batch_core.close()
 
         core.close()
         rejected(lambda: core.snapshot(3), RuntimeError)
@@ -96,7 +108,7 @@ def main():
             "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
             "scope": "Private real-library CPU handle; no HTTP, model, live policy or image identity acceptance.",
         }
-        require(result["abi_version"] == 2, "unexpected ABI")
+        require(result["abi_version"] == 3, "unexpected ABI")
         print(json.dumps(result, sort_keys=True))
     finally:
         core.close()

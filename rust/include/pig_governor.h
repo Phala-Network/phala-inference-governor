@@ -6,15 +6,20 @@
 extern "C" {
 #endif
 
-/* ABI v2: caller provides valid pointers; free must not race another call.
+/* ABI v3: caller provides valid pointers; free must not race another call.
  * Status: 0 success, 1 invalid input, 2 revision conflict, 3 internal failure.
  * Outputs and state remain unchanged on invalid input or revision conflict.
- * new starts revision at 1. All times use one monotonic seconds clock.
+ * new starts revision at 1 and receives the native max running request bound.
+ * All times use one monotonic seconds clock.
  * Buckets quantize the oldest window edge by less than 0.5 seconds.
  * Python owns epoch checks, request lifecycle and exactly-once Decode deltas.
- * Snapshot/choose accrue actual time using the preceding active count.
+ * Snapshot/choose accrue time using the preceding active count; observe_batch
+ * supplies the same interval explicitly and never double-counts it.
  * choose output: 0 native, 1 bounded Decode preference (never admission).
  * observe_surface records one real Decode cell before state transition.
+ * duration arguments are total Decode sequence-seconds, not elapsed wall-time.
+ * A positive token delta with zero sequence-seconds is invalid evidence.
+ * observe_batch commits surface and aggregate observations in one transaction.
  */
 typedef struct PigGovernor PigGovernor;
 typedef struct {
@@ -48,14 +53,20 @@ typedef struct {
 } PigGovernorAdmission;
 
 uint32_t pig_governor_abi_version(void);
-int32_t pig_governor_new(double reference, PigGovernor **out);
+int32_t pig_governor_new(double reference, uint32_t max_running_requests,
+                       PigGovernor **out);
 int32_t pig_governor_free(PigGovernor *handle);
 int32_t pig_governor_observe(PigGovernor *handle, double now, uint64_t delta,
                            uint64_t active_after);
 int32_t pig_governor_observe_surface(PigGovernor *handle, double now,
-                                      uint64_t delta, double duration,
+                                      uint64_t delta, double sequence_seconds,
                                       uint32_t concurrency,
                                       uint32_t pressure_class);
+int32_t pig_governor_observe_batch(PigGovernor *handle, double now,
+                                  uint64_t delta, double sequence_seconds,
+                                  uint32_t concurrency,
+                                  uint32_t pressure_class,
+                                  uint64_t active_after);
 int32_t pig_governor_prefill(PigGovernor *handle, double now, double wall);
 int32_t pig_governor_update_reference(PigGovernor *handle,
                                     uint64_t expected_revision, double reference);

@@ -215,10 +215,11 @@ and the discarded static TAIL semaphore are not part of this design.
 
 ## Implementation status (2026-09-21)
 
-The local implementation now uses ABI v2 and a bounded response surface:
+The local implementation now uses ABI v3 and a bounded response surface:
 
-- `pig_governor_observe_surface(now, delta, duration, concurrency, pressure_class)`
-  records real Decode evidence in the target cell.
+- `pig_governor_observe_surface(now, delta, sequence_seconds, concurrency, pressure_class)`
+  records real Decode evidence in the target cell. The mass is assigned to the
+  observation bucket; it is never treated as elapsed wall-time or capped at 60.
 - `pig_governor_admit(now, projected_concurrency, pressure_class)` consults the exact
   projected cell first, then only a jointly heavier qualified cell.
 - The Scheduler keeps `outstanding/admitted_pressure_counts` separate from
@@ -226,6 +227,21 @@ The local implementation now uses ABI v2 and a bounded response surface:
   cannot be recorded as runtime evidence.
 - `SglangGovernor.after_result()` commits one forward batch before publishing
   active-state changes, so tokens are attributed to the batch-start cell.
+- A mixed-pressure batch is recorded once at its aggregate batch-start pressure
+  class, using total completion tokens and total sequence-seconds rather than
+  splitting the same forward pass into per-request cells.
+- `pig_governor_observe_batch()` commits the surface cell and aggregate window in
+  one controller transaction, so a failed observation cannot leave half a batch.
+- `pig_governor_new()` receives the native max running request bound; surface
+  observations and admission forecasts above that deployment bound are invalid.
+- Surface qualification uses exposure in the current evidence window. A
+  positive token delta with zero sequence-seconds is invalid and cannot enter
+  either TPS numerator; the Scheduler buffers same-timestamp tokens in a
+  bounded response-cell ledger and only joins them to positive exposure from
+  that same cell within the 60-second evidence window. A zero-token/zero-duration event cannot
+  refresh qualification or extend stale age.
+- A queued or active abort releases its reservation whenever Governor progress or
+  a reservation exists, so cancellation before first Decode cannot leak state.
 - Admission is called before `grammar_manager.process_req_with_grammar(req)`.
   `_add_request_to_queue()` only verifies that a valid request already carries a
   reservation; retraction reuses that reservation.
@@ -236,3 +252,5 @@ The local implementation now uses ABI v2 and a bounded response surface:
 
 Remaining gates are a Linux builder test run, the complete SGLang lifecycle/429
 suite, image composition and the authorized C2 offline rollout.
+CI now applies the hook patch to a clean SGLang parent and runs the full Python
+suite inside the composed image dependency environment before image publication.

@@ -8,7 +8,7 @@ import msgspec
 from sglang.test.test_utils import maybe_stub_sgl_kernel
 
 maybe_stub_sgl_kernel()
-from sglang.srt.managers.scheduler import Scheduler
+from sglang.srt.managers.scheduler import Scheduler, _make_abort_req
 from sglang.srt.managers.io_struct import AbortReq, SetInternalStateReq
 from sglang.srt.disaggregation.utils import DisaggregationMode
 from sglang.srt.mem_cache.base_prefix_cache import (
@@ -23,7 +23,7 @@ from pig_governor.sglang import SglangGovernor
 
 class NativeSchedulerTests(unittest.TestCase):
     def setUp(self):
-        self.core = Governor(35)
+        self.core = Governor(35, max_running_requests=43)
         self.addCleanup(self.core.close)
         self.sched = object.__new__(Scheduler)
         self.sched.governor = SglangGovernor(self.core, max_running_requests=43)
@@ -166,6 +166,28 @@ class GovernorHookTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, 'without Governor reservation'):
             sched._add_request_to_queue(unadmitted)
+
+    def test_abort_releases_queued_reservation_without_progress(self):
+        core = Governor(0, max_running_requests=43)
+        self.addCleanup(core.close)
+        governor = SglangGovernor(core, max_running_requests=43)
+        req = SimpleNamespace(
+            rid='queued',
+            origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+            finished=lambda: False,
+            output_ids=[],
+            weight_version_events=[],
+        )
+        governor.admit_request(req, 1)
+        self.assertEqual(governor.outstanding, 1)
+        with patch(
+            'sglang.srt.managers.scheduler.compute_weight_version_spans',
+            return_value=[],
+        ):
+            _make_abort_req(req)
+        self.assertEqual(governor.outstanding, 0)
+        self.assertIsNone(getattr(req, 'governor_progress', None))
 
     def test_governor_admission_reject_returns_429_before_queue_insertion(self):
         sched = self._scheduler()

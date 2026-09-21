@@ -20,6 +20,10 @@ class Core:
         self.rows.append(
             ("surface", now, delta, duration, concurrency, pressure_class)
         )
+    def observe_batch(self, now, delta, duration, concurrency,
+                     pressure_class, active_after):
+        self.observe_surface(now, delta, duration, concurrency, pressure_class)
+        self.observe(now, delta, active_after)
 
     def admit(self, now, projected_concurrency, pressure_class):
         self.rows.append(
@@ -48,6 +52,10 @@ def request(rid, input_tokens=16, max_new_tokens=16):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_max_running_requests_is_bounded_to_32_bits(self):
+        with self.assertRaises(ValueError):
+            SchedulerGovernor(Core(), max_running_requests=2**32)
+
     def test_first_decode_token_is_excluded_and_entering_exposure_starts(self):
         core = Core()
         adapter = SchedulerGovernor(core)
@@ -65,6 +73,37 @@ class LifecycleTests(unittest.TestCase):
         adapter.committed(progress, 3, 4, pressure_class=0)
         self.assertIn(("surface", 3, 3, 2.0, 1, 0), core.rows)
         self.assertEqual((progress.output_tokens, progress.decoding, progress.terminal, adapter.active), (4, True, False, 1))
+
+    def test_zero_time_tokens_are_buffered_until_positive_exposure(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        progress = Progress()
+        adapter.committed(progress, 1, 3, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 2)
+        adapter.committed(progress, 1, 5, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 4)
+        self.assertEqual(
+            [row for row in core.rows if row[0] == "surface"], []
+        )
+        adapter.committed(progress, 2, 6, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence, {})
+        self.assertIn(("surface", 2, 5, 1.0, 1, 0), core.rows)
+
+    def test_zero_time_tokens_never_cross_response_surface_cells(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        first = Progress()
+        second = Progress()
+        adapter.commit_batch(
+            [(first, 1, False, 0), (second, 1, False, 0)], 1
+        )
+        adapter.commit_batch(
+            [(first, 2, False, 0), (second, 2, True, 0)], 1
+        )
+        self.assertEqual(adapter._pending_evidence[(2, 0)][0], 2)
+        adapter.committed(first, 2, 3, pressure_class=0)
+        self.assertIn(("surface", 2, 1, 1.0, 1, 0), core.rows)
+        self.assertEqual(adapter._pending_evidence[(2, 0)][0], 2)
 
     def test_terminal_decode_records_interval_and_leaves_active(self):
         core = Core()
@@ -146,7 +185,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(calls[0][3], 0)
         self.assertEqual(calls[1][3], 3)
 
-    def test_batch_attributes_all_tokens_to_batch_start_state(self):
+    def test_mixed_batch_attributes_tokens_to_aggregate_batch_start_state(self):
         core = Core()
         adapter = SchedulerGovernor(core, max_running_requests=4)
         first = Progress(pressure_class=0)
@@ -160,9 +199,25 @@ class LifecycleTests(unittest.TestCase):
             3,
         )
         surfaces = [row for row in core.rows if row[0] == "surface"]
-        self.assertEqual(surfaces[0][:4], ("surface", 3, 1, 1.0))
-        self.assertEqual(surfaces[1][:4], ("surface", 3, 2, 1.0))
-        self.assertEqual([row[4] for row in surfaces], [2, 2])
+        self.assertEqual(surfaces, [("surface", 3, 3, 2.0, 2, 1)])
+        self.assertEqual(adapter.active, 2)
+        self.assertEqual(adapter.active_pressure_counts, [1, 1, 0, 0])
+
+    def test_invalid_later_update_does_not_mutate_batch_progress(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        first = Progress(pressure_class=0)
+        second = Progress(pressure_class=1)
+        adapter.commit_batch(
+            [(first, 1, False, 0), (second, 1, False, 1)],
+            1,
+        )
+        with self.assertRaises(ValueError):
+            adapter.commit_batch(
+                [(first, 2, False, 0), (second, 0, False, 1)],
+                2,
+            )
+        self.assertEqual((first.output_tokens, second.output_tokens), (1, 1))
         self.assertEqual(adapter.active, 2)
         self.assertEqual(adapter.active_pressure_counts, [1, 1, 0, 0])
 

@@ -74,7 +74,7 @@ class FakeManager:
             admin_api_key=admin_api_key,
             api_key=api_key,
         )
-        self.core = Governor(35)
+        self.core = Governor(35, max_running_requests=4)
         self.now = 3.0
         self.set_started = asyncio.Event()
         self.release_set = asyncio.Event()
