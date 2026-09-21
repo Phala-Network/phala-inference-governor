@@ -233,13 +233,17 @@ impl State {
     }
 
     fn advance(&mut self, now: f64) -> Result<()> {
+        self.advance_clock(now, true)
+    }
+
+    fn advance_clock(&mut self, now: f64, accumulate_active: bool) -> Result<()> {
         if !nonnegative(now) || now >= MAX_CLOCK || self.last_time.is_some_and(|last| now < last) {
             return Err(INVALID);
         }
         if let Some(last) = self.last_time {
             let oldest = (tick(now - WINDOW_SECONDS) as f64 * BUCKET_SECONDS).max(0.0);
             let mut start = last.max(oldest);
-            while self.active > 0 && start < now {
+            while accumulate_active && self.active > 0 && start < now {
                 let index = tick(start);
                 let end = (((index + 1) as f64) * BUCKET_SECONDS).min(now);
                 if end <= start {
@@ -269,6 +273,31 @@ impl State {
             return Err(INVALID);
         }
         Ok((tokens, seconds))
+    }
+
+    fn record_window(&mut self, now: f64, delta: u64, duration: f64) -> Result<()> {
+        if !nonnegative(duration) {
+            return Err(INVALID);
+        }
+        let duration = duration.min(WINDOW_SECONDS);
+        let start = (now - duration).max(0.0);
+        let mut cursor = start;
+        while cursor < now {
+            let index = tick(cursor);
+            let end = (((index + 1) as f64) * BUCKET_SECONDS).min(now);
+            if end <= cursor {
+                return Err(INVALID);
+            }
+            let segment = end - cursor;
+            self.bucket(index).seconds += segment;
+            cursor = end;
+        }
+        self.bucket(tick(now)).tokens = self
+            .bucket(tick(now))
+            .tokens
+            .checked_add(delta)
+            .ok_or(INVALID)?;
+        Ok(())
     }
 
     fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
@@ -318,8 +347,26 @@ impl State {
         pressure_class: u32,
         active_after: u64,
     ) -> Result<()> {
-        self.observe_surface(now, delta, duration, concurrency, pressure_class)?;
-        self.observe(now, delta, active_after)
+        if concurrency == 0
+            || concurrency > self.max_running_requests
+            || pressure_class >= PRESSURE_CLASSES
+            || !nonnegative(duration)
+        {
+            return Err(INVALID);
+        }
+
+        let mut next = self.clone();
+        next.advance_clock(now, false)?;
+        let cell = next
+            .surface
+            .entry((concurrency, pressure_class))
+            .or_insert_with(SurfaceCell::new);
+        cell.observe(now, delta, duration)?;
+        next.record_window(now, delta, duration)?;
+        next.active = active_after;
+        next.observed = true;
+        *self = next;
+        Ok(())
     }
 
     fn prefill(&mut self, now: f64, wall: f64) -> Result<()> {
