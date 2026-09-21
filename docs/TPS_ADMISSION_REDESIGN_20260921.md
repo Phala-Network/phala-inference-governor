@@ -231,7 +231,10 @@ The local implementation now uses ABI v3 and a bounded response surface:
   class, using total completion tokens and total sequence-seconds rather than
   splitting the same forward pass into per-request cells.
 - `pig_governor_observe_batch()` commits the surface cell and aggregate window in
-  one controller transaction, so a failed observation cannot leave half a batch.
+  one controller transaction. The surface receives the caller's complete
+  sequence-second mass, while the aggregate window accrues only active time not
+  already advanced by `snapshot`, `choose`, or admission, so an intermediate
+  read cannot count the same exposure twice.
 - `pig_governor_new()` receives the native max running request bound; surface
   observations and admission forecasts above that deployment bound are invalid.
 - Surface qualification uses exposure in the current evidence window. A

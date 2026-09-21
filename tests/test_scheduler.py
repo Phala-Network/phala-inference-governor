@@ -74,6 +74,30 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn(("surface", 3, 3, 2.0, 1, 0), core.rows)
         self.assertEqual((progress.output_tokens, progress.decoding, progress.terminal, adapter.active), (4, True, False, 1))
 
+    def test_active_state_transition_splits_surface_exposure_at_transition(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        first = Progress(pressure_class=0)
+        second = Progress(pressure_class=0)
+
+        adapter.committed(first, 0, 1, pressure_class=0)
+        # A Prefill-only result can introduce the second request without
+        # carrying the already-running request in the native batch.
+        adapter.committed(second, 10, 1, pressure_class=0)
+        adapter.commit_batch(
+            [(first, 2, False, 0), (second, 2, False, 0)],
+            11,
+        )
+
+        surfaces = [row for row in core.rows if row[0] == "surface"]
+        self.assertEqual(
+            surfaces,
+            [
+                ("surface", 10, 0, 10.0, 1, 0),
+                ("surface", 11, 2, 2.0, 2, 0),
+            ],
+        )
+
     def test_zero_time_tokens_are_buffered_until_positive_exposure(self):
         core = Core()
         adapter = SchedulerGovernor(core)
@@ -202,6 +226,57 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(surfaces, [("surface", 3, 3, 2.0, 2, 1)])
         self.assertEqual(adapter.active, 2)
         self.assertEqual(adapter.active_pressure_counts, [1, 1, 0, 0])
+
+    def test_pressure_transition_splits_exposure_before_cell_change(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        low = Progress(pressure_class=0)
+        high = Progress(pressure_class=3)
+        replacement = Progress(pressure_class=0)
+
+        adapter.commit_batch(
+            [(low, 1, False, 0), (high, 1, False, 3)],
+            0,
+        )
+        adapter.commit_batch(
+            [(high, 1, True, 3), (replacement, 1, False, 0)],
+            10,
+        )
+        adapter.commit_batch(
+            [(low, 2, False, 0), (replacement, 2, False, 0)],
+            11,
+        )
+
+        surfaces = [row for row in core.rows if row[0] == "surface"]
+        self.assertEqual(
+            surfaces,
+            [
+                ("surface", 10, 0, 20.0, 2, 3),
+                ("surface", 11, 2, 2.0, 2, 0),
+            ],
+        )
+
+    def test_partial_abort_splits_exposure_before_concurrency_change(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        first = Progress(pressure_class=0)
+        second = Progress(pressure_class=0)
+
+        adapter.commit_batch(
+            [(first, 1, False, 0), (second, 1, False, 0)],
+            0,
+        )
+        adapter.terminated(first, 10, pressure_class=0)
+        adapter.committed(second, 11, 2, pressure_class=0)
+
+        surfaces = [row for row in core.rows if row[0] == "surface"]
+        self.assertEqual(
+            surfaces,
+            [
+                ("surface", 10, 0, 20.0, 2, 0),
+                ("surface", 11, 1, 1.0, 1, 0),
+            ],
+        )
 
     def test_invalid_later_update_does_not_mutate_batch_progress(self):
         core = Core()

@@ -49,6 +49,7 @@ class NativeAbiTests(unittest.TestCase):
         self.addCleanup(core.close)
         # Duration is total sequence-seconds, not elapsed wall-time. At four
         # concurrent sequences this must retain all four seconds even at t=1.
+        core.observe(0, 0, 4)
         core.observe_batch(1, 160, 4.0, 4, 0, 4)
         state = core.snapshot(1)
         self.assertEqual(state["decode_tokens"], 160)

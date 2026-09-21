@@ -57,6 +57,28 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.core.snapshot(3)['decode_sequence_seconds'], 2)
         self.assertEqual(self.adapter.outstanding, 0)
 
+    def test_native_pre_admission_abort_skips_governor_progress(self):
+        req = SimpleNamespace(
+            finished=lambda: False,
+            to_finish=object(),
+        )
+        batch = SimpleNamespace(
+            reqs=[req], launch_ts=0,
+            forward_mode=SimpleNamespace(is_extend_without_speculative=lambda: False),
+        )
+        self.adapter.after_result(batch, 1)
+        self.assertIsNone(getattr(req, 'governor_progress', None))
+        self.assertEqual(self.adapter.outstanding, 0)
+
+    def test_unmanaged_nonterminal_result_still_fails_closed(self):
+        req = SimpleNamespace(finished=lambda: False, to_finish=None)
+        batch = SimpleNamespace(
+            reqs=[req], launch_ts=0,
+            forward_mode=SimpleNamespace(is_extend_without_speculative=lambda: False),
+        )
+        with self.assertRaisesRegex(RuntimeError, 'no Governor reservation'):
+            self.adapter.after_result(batch, 1)
+
     def test_create_reads_resolved_namespaces_not_raw_server_args(self):
         raw = SimpleNamespace(tp_size=8, pp_size=8, dp_size=8,
                               disable_overlap_schedule=False,

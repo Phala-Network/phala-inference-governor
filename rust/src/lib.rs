@@ -148,9 +148,12 @@ impl SurfaceCell {
         Ok(())
     }
 
-    fn qualified(&self, now: f64) -> bool {
-        self.last_qualified
+    fn qualified(&self, now: f64) -> Result<bool> {
+        let (_, recent_seconds) = self.evidence(now, WINDOW_SECONDS)?;
+        Ok(self
+            .last_qualified
             .is_some_and(|qualified| now - qualified <= MAX_SURFACE_AGE_SECONDS)
+            && recent_seconds >= MIN_EXPOSURE_SECONDS)
     }
 
     fn lower_bound(&self, now: f64) -> Result<Option<f64>> {
@@ -269,27 +272,16 @@ impl State {
         Ok((tokens, seconds))
     }
 
-    fn record_window(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
-        if !nonnegative(sequence_seconds) || (delta > 0 && sequence_seconds == 0.0) {
-            return Err(INVALID);
-        }
+    fn record_tokens(&mut self, now: f64, delta: u64) -> Result<()> {
         let bucket = self.bucket(tick(now));
-        bucket.seconds += sequence_seconds;
-        if !bucket.seconds.is_finite() {
-            return Err(INVALID);
-        }
         bucket.tokens = bucket.tokens.checked_add(delta).ok_or(INVALID)?;
+        self.evidence(now, WINDOW_SECONDS)?;
         Ok(())
     }
 
     fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
         self.advance(now)?;
-        self.bucket(tick(now)).tokens = self
-            .bucket(tick(now))
-            .tokens
-            .checked_add(delta)
-            .ok_or(INVALID)?;
-        self.evidence(now, WINDOW_SECONDS)?;
+        self.record_tokens(now, delta)?;
         self.active = active_after;
         self.observed = true;
         Ok(())
@@ -340,13 +332,13 @@ impl State {
         }
 
         let mut next = self.clone();
-        next.advance_clock(now, false)?;
+        next.advance(now)?;
         let cell = next
             .surface
             .entry((concurrency, pressure_class))
             .or_insert_with(SurfaceCell::new);
         cell.observe(now, delta, sequence_seconds)?;
-        next.record_window(now, delta, sequence_seconds)?;
+        next.record_tokens(now, delta)?;
         next.active = active_after;
         next.observed = true;
         *self = next;
@@ -433,7 +425,7 @@ impl State {
         let mut selected: Option<((u32, u32), f64)> = None;
 
         if let Some(cell) = self.surface.get(&exact_key) {
-            if cell.qualified(now) {
+            if cell.qualified(now)? {
                 if let Some(bound) = cell.lower_bound(now)? {
                     selected = Some((exact_key, bound));
                 }
@@ -445,7 +437,7 @@ impl State {
                 if key.0 < projected_concurrency || key.1 < pressure_class {
                     continue;
                 }
-                if !cell.qualified(now) {
+                if !cell.qualified(now)? {
                     continue;
                 }
                 let Some(bound) = cell.lower_bound(now)? else {
@@ -758,6 +750,7 @@ mod tests {
     #[test]
     fn batch_sequence_seconds_are_mass_not_elapsed_wall_time() {
         let mut s = State::new(50.0, 4).unwrap();
+        s.observe(0.0, 0, 4).unwrap();
         s.observe_batch(1.0, 160, 4.0, 4, 0, 4).unwrap();
         let snapshot = s.snapshot(1.0).unwrap();
         assert_eq!(snapshot.tokens_60s, 160);
@@ -768,6 +761,18 @@ mod tests {
         assert_eq!(admission.allowed, 0);
         assert_eq!(admission.reason, ADMISSION_TPS_RISK);
         assert_eq!(admission.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn batch_after_snapshot_does_not_recount_prior_active_exposure() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe(1.0, 0, 1).unwrap();
+        assert_eq!(s.snapshot(2.0).unwrap().sequence_seconds_60s, 1.0);
+
+        s.observe_batch(3.0, 0, 2.0, 1, 0, 0).unwrap();
+        let snapshot = s.snapshot(3.0).unwrap();
+        assert_eq!(snapshot.sequence_seconds_60s, 2.0);
+        assert_eq!(snapshot.active_sequences, 0);
     }
 
     #[test]
@@ -869,6 +874,18 @@ mod tests {
         s.observe_surface(1.0, 100, 0.1, 1, 0).unwrap();
         s.observe_surface(80.0, 1000, 0.001, 1, 0).unwrap();
         let admission = s.admission(80.0, 1, 0).unwrap();
+        assert_eq!(admission.reason, ADMISSION_UNKNOWN);
+    }
+
+    #[test]
+    fn sliding_window_rechecks_current_surface_exposure() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 4, 0.1, 1, 0).unwrap();
+        s.observe_surface(60.9, 1, 0.001, 1, 0).unwrap();
+        assert_eq!(s.admission(60.9, 1, 0).unwrap().reason, ADMISSION_TPS_RISK);
+
+        let admission = s.admission(61.6, 1, 0).unwrap();
+        assert_eq!(admission.allowed, 0);
         assert_eq!(admission.reason, ADMISSION_UNKNOWN);
     }
 

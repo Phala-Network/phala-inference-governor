@@ -81,6 +81,13 @@ class SglangGovernor(SchedulerGovernor):
         updates = []
         terminal_requests = []
         for req in batch.reqs:
+            if (
+                getattr(req, "governor_progress", None) is None
+                and getattr(req, "governor_reservation", None) is None
+            ):
+                if req.finished() or getattr(req, "to_finish", None) is not None:
+                    continue
+                raise RuntimeError("Request has no Governor reservation")
             progress = self._progress_for(req)
             if progress.terminal:
                 continue
