@@ -453,36 +453,35 @@ impl State {
             return Err(INVALID);
         }
         let view = self.snapshot(now)?;
-        if decode == 0
-            || prefill == 0
-            || self.reference == 0.0
-            || view.sequence_seconds_60s <= 0.0
-            || view.tokens_60s == 0
-        {
-            return Ok(0);
-        }
-        let signal = view.tokens_60s as f64 / view.sequence_seconds_60s;
-        if signal <= 0.0 || !signal.is_finite() {
-            return Ok(0);
-        }
-        if self.preference_until > now {
-            return Ok(1);
-        }
-        if self.prefill_end.is_none() || now < self.prefill_end.unwrap() {
-            return Ok(0);
-        }
+        self.preference_until = 0.0;
         let Some(end) = self.prefill_end else {
             return Ok(0);
         };
-        let duration =
-            ((now - end) / MAX_PREFERENCE_SECONDS).clamp(0.0, 1.0) * MAX_PREFERENCE_SECONDS;
-        if self.prefill_wall <= 0.0 {
+        if decode == 0
+            || prefill == 0
+            || self.reference == 0.0
+            || !self.observed
+            || view.sequence_seconds_60s == 0.0
+        {
             return Ok(0);
         }
-        let preference = self.prefill_wall * (self.reference / signal - 1.0).max(0.0);
-        let end = now + duration.max(preference.min(MAX_PREFERENCE_SECONDS));
-        self.preference_until = end;
-        Ok(1)
+        let mean = view.tokens_60s as f64 / view.sequence_seconds_60s;
+        let signal = if view.sequence_seconds_2s > 0.0 {
+            let weight = view.sequence_seconds_2s / (view.sequence_seconds_2s + 1.0);
+            mean * (1.0 - weight) + (view.tokens_2s as f64 / view.sequence_seconds_2s) * weight
+        } else {
+            mean
+        };
+        let requested = if signal == 0.0 {
+            MAX_PREFERENCE_SECONDS
+        } else {
+            (self.prefill_wall * (self.reference / signal - 1.0).max(0.0))
+                .min(MAX_PREFERENCE_SECONDS)
+        };
+        let mass = view.sequence_seconds_60s;
+        let duration = requested * (mass / (mass + 1.0)) / (1.0 + age / MAX_PREFERENCE_SECONDS);
+        self.preference_until = end + duration;
+        Ok(u32::from(now - end < duration))
     }
 }
 
@@ -505,9 +504,12 @@ fn transaction<T>(
     if handle.is_null() {
         return Err(INVALID);
     }
-    let governor = unsafe { &mut *handle };
+    let governor = unsafe { &*handle };
     let mut state = governor.state.lock().map_err(|_| INTERNAL)?;
-    action(&mut state)
+    let mut next = state.clone();
+    let output = action(&mut next)?;
+    *state = next;
+    Ok(output)
 }
 
 #[no_mangle]
@@ -644,9 +646,9 @@ mod tests {
     fn aggregate_window_rejects_clock_and_token_regressions() {
         let mut s = State::new(100.0).unwrap();
         assert_eq!(s.observe(-1.0, 0, 1), Err(INVALID));
-        assert_eq!(s.observe(1.0, 0, 1), Ok(()));
+        assert_eq!(s.observe(1.0, 1, 1), Ok(()));
         assert_eq!(s.observe(0.5, 1, 1), Err(INVALID));
-        assert_eq!(s.observe(1.0, u64::MAX, 1), Err(INVALID));
+        assert_eq!(s.observe(1.5, u64::MAX, 1), Err(INVALID));
         assert_eq!(s.snapshot(1.0).unwrap().active_sequences, 1);
     }
 
@@ -657,7 +659,7 @@ mod tests {
         s.observe(1.0, 1, 1).unwrap();
         let snapshot = s.snapshot(1.0).unwrap();
         assert_eq!(snapshot.tokens_60s, 1);
-        assert_eq!(snapshot.sequence_seconds_60s, 0.0);
+        assert_eq!(snapshot.sequence_seconds_60s, 1.0);
     }
 
     #[test]
