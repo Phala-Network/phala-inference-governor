@@ -73,7 +73,7 @@ class NativeAbiTests(unittest.TestCase):
         self.assertFalse(admission["allowed"])
         self.assertEqual(admission["reason"], 2)
         self.assertEqual(admission["projected_tps"], 40.0)
-        self.assertEqual(admission["active_sequences"], 1)
+        self.assertEqual(admission["active_decode_sequences"], 1)
 
     def test_surface_heavier_cell_is_safe_but_lighter_cell_is_not(self):
         core = Governor(50, max_running_requests=4)
