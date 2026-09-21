@@ -1,5 +1,7 @@
 # Component probe preflight
 
+> Historical record for the earlier v1 ABI probe. The current source uses ABI v3.
+
 `scripts/check_component_contract.py` was executed on the approved remote805
 fixed C4 image, with one CPU, no network, GPU void, read-only source evidence
 mount and `PYTHONOPTIMIZE=1`. This was source-bound preflight, not a final-image

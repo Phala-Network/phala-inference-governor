@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
-        self.core = Governor(35)
+        self.core = Governor(0, max_running_requests=4)
         self.addCleanup(self.core.close)
         self.adapter = SglangGovernor(self.core, max_running_requests=4)
 

@@ -6,7 +6,7 @@ from pig_governor.admin import execute
 
 class NativeAbiTests(unittest.TestCase):
     def setUp(self):
-        self.core = Governor(35)
+        self.core = Governor(35, max_running_requests=4)
         self.addCleanup(self.core.close)
 
     def test_real_ffi_window_and_external_policy_contract(self):
@@ -29,7 +29,7 @@ class NativeAbiTests(unittest.TestCase):
             self.core.update_reference("0" * 32, 2, 20)
 
     def test_surface_exact_cell_fit_and_risk(self):
-        core = Governor(50)
+        core = Governor(50, max_running_requests=4)
         self.addCleanup(core.close)
         self.assertEqual(core.admit(1, 1, 0)["reason"], 4)
         core.observe_surface(1, 100, 1.0, 1, 0)
@@ -44,8 +44,20 @@ class NativeAbiTests(unittest.TestCase):
         self.assertFalse(risk["allowed"])
         self.assertEqual(risk["reason"], 2)
 
+    def test_atomic_batch_observation_updates_surface_and_window(self):
+        core = Governor(50, max_running_requests=4)
+        self.addCleanup(core.close)
+        core.observe_batch(1, 100, 1.0, 1, 0, 1)
+        state = core.snapshot(1)
+        self.assertEqual(state["decode_tokens"], 100)
+        self.assertEqual(state["decode_sequence_seconds"], 1.0)
+        admission = core.admit(1, 1, 0)
+        self.assertTrue(admission["allowed"])
+        self.assertEqual(admission["reason"], 0)
+        self.assertEqual(admission["evidence_concurrency"], 1)
+
     def test_surface_heavier_cell_is_safe_but_lighter_cell_is_not(self):
-        core = Governor(50)
+        core = Governor(50, max_running_requests=4)
         self.addCleanup(core.close)
         core.observe_surface(1, 100, 1.0, 4, 1)
         heavier = core.admit(1, 1, 0)
@@ -53,7 +65,7 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(heavier["evidence_concurrency"], 4)
         self.assertEqual(heavier["evidence_pressure_class"], 1)
 
-        lighter_core = Governor(50)
+        lighter_core = Governor(50, max_running_requests=4)
         self.addCleanup(lighter_core.close)
         lighter_core.observe_surface(1, 100, 1.0, 1, 0)
         lighter = lighter_core.admit(1, 2, 0)
@@ -61,7 +73,7 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(lighter["reason"], 4)
 
     def test_reference_zero_samples_and_cas_preserves_surface(self):
-        core = Governor(0)
+        core = Governor(0, max_running_requests=4)
         self.addCleanup(core.close)
         admission = core.admit(1, 4, 0)
         self.assertTrue(admission["allowed"])
@@ -78,6 +90,11 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(admission["reference"], 50)
 
     def test_invalid_inputs_and_closed_handle(self):
+        with self.assertRaises(ValueError):
+            Governor(35, max_running_requests=0)
+        with self.assertRaises(ValueError):
+            Governor(35, max_running_requests=2**32)
+
         self.core.observe(5, 0, 1)
         with self.assertRaises(ValueError): self.core.observe(4, 8, 0)
         with self.assertRaises(ValueError): self.core.observe(6, -1, 0)
@@ -85,6 +102,8 @@ class NativeAbiTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.core.observe_surface(6, 1, 1.0, 0, 0)
         with self.assertRaises(ValueError): self.core.observe_surface(6, 1, 1.0, 1, 4)
         with self.assertRaises(ValueError): self.core.admit(6, 0, 0)
+        with self.assertRaises(ValueError): self.core.observe_surface(6, 1, 1.0, 5, 0)
+        with self.assertRaises(ValueError): self.core.admit(6, 5, 0)
         before = self.core.snapshot(5)
         self.assertEqual(before["active_decode_sequences"], 1)
         self.core.close()

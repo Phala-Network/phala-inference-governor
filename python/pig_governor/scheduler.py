@@ -33,7 +33,7 @@ class SchedulerGovernor:
         if (
             type(max_running_requests) is not int
             or max_running_requests <= 0
-            or max_running_requests >= 2**64
+            or max_running_requests >= 2**32
         ):
             raise ValueError("Invalid native max_running_requests")
         self.core = core
@@ -119,11 +119,15 @@ class SchedulerGovernor:
             raise ValueError("Expected a batch update sequence")
         active_before = self.active
         pressure_before = list(self.active_pressure_counts)
+        active_pressure_before = max(
+            (index for index, count in enumerate(pressure_before) if count),
+            default=0,
+        )
         entering = [0, 0, 0, 0]
         leaving = [0, 0, 0, 0]
-        deltas = [0, 0, 0, 0]
-        durations = [0.0, 0.0, 0.0, 0.0]
         total_delta = 0
+        total_duration = 0.0
+        proposed = []
 
         for progress, output_tokens, terminal, pressure_class in updates:
             if not isinstance(progress, Progress):
@@ -139,6 +143,9 @@ class SchedulerGovernor:
             if output_tokens < progress.output_tokens:
                 raise ValueError("Committed output cannot go backwards; use terminated for abort")
 
+            delta = 0
+            duration = 0.0
+            entering_request = False
             if progress.decoding:
                 delta = output_tokens - progress.output_tokens
                 if progress.last_time is None:
@@ -146,27 +153,23 @@ class SchedulerGovernor:
                 duration = now - progress.last_time
                 if duration < 0:
                     raise ValueError("Observation clock went backwards")
-                durations[pressure_class] += duration
-                progress.last_time = now
             else:
                 delta = max(0, output_tokens - 1)
                 entering_request = output_tokens > 0 and not terminal
                 if entering_request:
                     entering[pressure_class] += 1
-                    progress.last_time = now
-                else:
-                    progress.last_time = None
-
-            if not progress.decoding and terminal:
-                delta = 0
+                if terminal:
+                    delta = 0
             if progress.decoding and terminal:
                 leaving[pressure_class] += 1
 
-            deltas[pressure_class] += delta
             total_delta += delta
-            progress.output_tokens = output_tokens
-            progress.decoding = (progress.decoding or (not progress.decoding and output_tokens > 0 and not terminal)) and not terminal
-            progress.terminal = terminal
+            total_duration += duration
+            new_decoding = (progress.decoding or entering_request) and not terminal
+            new_last_time = now if new_decoding else None
+            proposed.append((
+                progress, output_tokens, new_decoding, terminal, new_last_time
+            ))
 
         active_after = active_before + sum(entering) - sum(leaving)
         if active_after < 0:
@@ -177,12 +180,18 @@ class SchedulerGovernor:
             if pressure_after[index] < 0:
                 raise RuntimeError("Active pressure accounting underflow")
 
-        self.core.observe(now, total_delta, active_after)
-        for index in range(4):
-            if deltas[index] or durations[index]:
-                self.core.observe_surface(
-                    now, deltas[index], durations[index], active_before, index
-                )
+        if active_before > 0 and (total_delta or total_duration):
+            self.core.observe_batch(
+                now, total_delta, total_duration, active_before,
+                active_pressure_before, active_after
+            )
+        else:
+            self.core.observe(now, total_delta, active_after)
+        for progress, output_tokens, new_decoding, terminal, new_last_time in proposed:
+            progress.output_tokens = output_tokens
+            progress.decoding = new_decoding
+            progress.terminal = terminal
+            progress.last_time = new_last_time
         self.active = active_after
         self.active_pressure_counts = pressure_after
 

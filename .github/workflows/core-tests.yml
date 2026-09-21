@@ -74,10 +74,24 @@ jobs:
         with:
           name: governor-library
           path: ${{ runner.temp }}
-      - name: Run Python integration tests in the composed SGLang image
+      - name: Apply Governor hooks to the pinned clean SGLang base
+        shell: bash
+        run: |
+          base_dir="$RUNNER_TEMP/sglang-clean-base"
+          base=63a21f09fcc26892a6d30c76945b783aa0eb3149
+          actual=$(git -C /sgl-workspace/sglang rev-parse "$base^{commit}")
+          test "$actual" = "$base"
+          git -C /sgl-workspace/sglang worktree add --detach "$base_dir" "$base"
+          git -C "$base_dir" apply --check "$GITHUB_WORKSPACE/patches/sglang/v0.5.20/0001-governor-hooks.patch"
+          git -C "$base_dir" apply "$GITHUB_WORKSPACE/patches/sglang/v0.5.20/0001-governor-hooks.patch"
+          python -m compileall -q \
+            "$base_dir/python/sglang/srt/entrypoints/http_server.py" \
+            "$base_dir/python/sglang/srt/managers/io_struct.py" \
+            "$base_dir/python/sglang/srt/managers/scheduler.py"
+      - name: Run Python integration tests against the patched SGLang base
         shell: bash
         env:
-          PYTHONPATH: ${{ github.workspace }}/python
+          PYTHONPATH: ${{ runner.temp }}/sglang-clean-base/python:${{ github.workspace }}/python
           PIG_GOVERNOR_LIBRARY: ${{ runner.temp }}/libpig_governor_core.so
           PYTHONDONTWRITEBYTECODE: '1'
         run: python -m unittest discover -s tests -p test_*.py -v
