@@ -21,7 +21,7 @@ preparing recovery.
 
 ## ABI v4 incident-repair candidate
 
-The current source candidate is Governor `0.2.0`, C ABI v4. The `govdev2`
+The current source candidate is Governor `0.2.1`, C ABI v4. The `govdev2`
 deployment described below is retained as historical evidence and does not
 contain the frozen-profile bootstrap contract.
 
@@ -53,6 +53,8 @@ Use the tested prebuilt Rust library and Python package with:
 - PIG_GOVERNOR_ENABLE=1
 - PIG_GOVERNOR_LIBRARY set to the absolute mounted shared-library path
 - PIG_TPS_REFERENCE=50
+- PIG_MAX_RUNNING=43
+- PIG_MAX_WAITING=3
 - Python import path containing the mounted plugin package
 
 Remove only the obsolete native-QoS CLI options: tps-reference,
@@ -74,14 +76,16 @@ The existing Go cmd/phala-tail was adapted in its own source tree. The r2 source
 
 The development ingress retains transparent streaming forwarding, existing API
 authentication, public route allowlist and attestation behavior. The admin
-`GET/PATCH /admin/v1/predictive-policy` and epoch-guarded
+`GET/PATCH /admin/v1/predictive-policy` atomically manages TPS, logical running
+and waiting bounds, while the epoch-guarded
 `GET /admin/v1/predictive-profile` paths should forward the plugin response,
-without recreating the old native-QoS document or adding admission rules.
+without recreating the old native-QoS document.
 
-PATCH keeps expected_epoch, expected_revision and tps_reference. A 409 requires
-a fresh read before the caller decides on a new update. A 503 may follow an
-operation that is still in progress; read actual state before deciding whether
-another update is necessary. Do not automatically retry uncertain writes.
+PATCH requires `expected_epoch`, `expected_revision` and a non-empty subset of
+`tps_reference`, `max_running` and `max_waiting`. A 409 requires a fresh read
+before the caller decides on a new update. A 503 may follow an operation that is
+still in progress; read actual state before deciding whether another update is
+necessary. Do not automatically retry uncertain writes.
 
 The proxy must propagate disconnects to the upstream and preserve error codes.
 Its own in-flight count is transport evidence, not scheduler/cache ownership.
@@ -105,7 +109,7 @@ the old experiment layer.
 Compare matched workloads against the retained baseline: average Decode TPS,
 completed throughput, TTFT/queue age, fairness, CPU usage, errors and OOM.
 Average TPS stays a soft target. A low individual rate or long TTFT does not
-create a new rejection rule.
+change the Scheduler-owned admission policy outside the authenticated CAS API.
 
 
 Governor runtime archive r5: f06e2f0839fc2887f07c1a80812f0ece5dfe722aedb8a1b5886a1966953cd96d. All 26 payload hashes were verified after download. The earlier exact r44 recovery archive was downloaded and its 66 files verified before the completed govdev1 transition. A govdev2 replacement requires fresh recovery of the currently running govdev1 chain; the historical r44 recovery is not a substitute. Keep the unchanged TAIL running if only the backend wheel is replaced, and verify upstream connectivity after the new backend becomes ready.
