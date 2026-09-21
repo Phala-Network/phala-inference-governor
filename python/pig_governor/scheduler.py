@@ -42,6 +42,7 @@ class SchedulerGovernor:
         self.outstanding = 0
         self.admitted_pressure_counts = [0, 0, 0, 0]
         self.active_pressure_counts = [0, 0, 0, 0]
+        self._pending_evidence = {}
 
     @classmethod
     def _request_pressure_class(cls, req):
@@ -180,13 +181,36 @@ class SchedulerGovernor:
             if pressure_after[index] < 0:
                 raise RuntimeError("Active pressure accounting underflow")
 
-        if active_before > 0 and (total_delta or total_sequence_seconds):
+        pending_evidence = {
+            key: value for key, value in self._pending_evidence.items()
+            if now - value[1] <= 60.0
+        }
+        if active_before > 0 and total_sequence_seconds > 0:
+            cell = (active_before, active_pressure_before)
+            pending_tokens, _ = pending_evidence.pop(cell, (0, now))
             self.core.observe_batch(
-                now, total_delta, total_sequence_seconds, active_before,
-                active_pressure_before, active_after
+                now, total_delta + pending_tokens, total_sequence_seconds,
+                active_before, active_pressure_before, active_after
             )
         else:
-            self.core.observe(now, total_delta, active_after)
+            if total_delta > 0:
+                if active_before > 0:
+                    cell = (active_before, active_pressure_before)
+                elif active_after > 0:
+                    active_pressure_after = max(
+                        (index for index, count in enumerate(pressure_after) if count),
+                        default=0,
+                    )
+                    cell = (active_after, active_pressure_after)
+                else:
+                    cell = None
+                if cell is not None:
+                    prior_tokens, _ = pending_evidence.get(cell, (0, now))
+                    pending_tokens = prior_tokens + total_delta
+                    if pending_tokens >= 2**64:
+                        raise ValueError("Pending Decode token count overflow")
+                    pending_evidence[cell] = (pending_tokens, now)
+            self.core.observe(now, 0, active_after)
         for progress, output_tokens, new_decoding, terminal, new_last_time in proposed:
             progress.output_tokens = output_tokens
             progress.decoding = new_decoding
@@ -194,6 +218,7 @@ class SchedulerGovernor:
             progress.last_time = new_last_time
         self.active = active_after
         self.active_pressure_counts = pressure_after
+        self._pending_evidence = pending_evidence
 
     def committed(self, progress, now, output_tokens, *, terminal=False,
                   pressure_class=0):

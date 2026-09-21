@@ -18,6 +18,7 @@ extern "C" {
  * choose output: 0 native, 1 bounded Decode preference (never admission).
  * observe_surface records one real Decode cell before state transition.
  * duration arguments are total Decode sequence-seconds, not elapsed wall-time.
+ * A positive token delta with zero sequence-seconds is invalid evidence.
  * observe_batch commits surface and aggregate observations in one transaction.
  */
 typedef struct PigGovernor PigGovernor;

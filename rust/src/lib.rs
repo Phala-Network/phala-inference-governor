@@ -127,7 +127,7 @@ impl SurfaceCell {
     }
 
     fn observe(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
-        if !nonnegative(sequence_seconds) {
+        if !nonnegative(sequence_seconds) || (delta > 0 && sequence_seconds == 0.0) {
             return Err(INVALID);
         }
         let bucket = self.bucket(tick(now));
@@ -270,7 +270,7 @@ impl State {
     }
 
     fn record_window(&mut self, now: f64, delta: u64, sequence_seconds: f64) -> Result<()> {
-        if !nonnegative(sequence_seconds) {
+        if !nonnegative(sequence_seconds) || (delta > 0 && sequence_seconds == 0.0) {
             return Err(INVALID);
         }
         let bucket = self.bucket(tick(now));
@@ -307,6 +307,7 @@ impl State {
             || concurrency > self.max_running_requests
             || pressure_class >= PRESSURE_CLASSES
             || !nonnegative(sequence_seconds)
+            || (delta > 0 && sequence_seconds == 0.0)
         {
             return Err(INVALID);
         }
@@ -333,6 +334,7 @@ impl State {
             || concurrency > self.max_running_requests
             || pressure_class >= PRESSURE_CLASSES
             || !nonnegative(sequence_seconds)
+            || (delta > 0 && sequence_seconds == 0.0)
         {
             return Err(INVALID);
         }
@@ -813,10 +815,50 @@ mod tests {
     }
 
     #[test]
-    fn zero_duration_tokens_do_not_extend_surface_qualification() {
+    fn zero_sequence_token_observation_cannot_raise_surface() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 4, 0.1, 1, 0).unwrap();
+        let before = s.admission(1.0, 1, 0).unwrap();
+        assert_eq!(before.reason, ADMISSION_TPS_RISK);
+        assert_eq!(before.projected_tps, 40.0);
+
+        assert_eq!(s.observe_surface(1.1, 1000, 0.0, 1, 0), Err(INVALID));
+        let after = s.admission(1.1, 1, 0).unwrap();
+        assert_eq!(after.reason, ADMISSION_TPS_RISK);
+        assert_eq!(after.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn zero_sequence_tokens_cannot_pollute_long_only_fallback() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_surface(1.0, 4, 0.1, 1, 0).unwrap();
+        let before = s.admission(3.6, 1, 0).unwrap();
+        assert_eq!(before.reason, ADMISSION_TPS_RISK);
+        assert_eq!(before.projected_tps, 40.0);
+        assert_eq!(s.observe_surface(3.6, 1000, 0.0, 1, 0), Err(INVALID));
+        let after = s.admission(3.6, 1, 0).unwrap();
+        assert_eq!(after.reason, ADMISSION_TPS_RISK);
+        assert_eq!(after.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn invalid_zero_sequence_batch_is_fully_atomic() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe_batch(1.0, 4, 0.1, 1, 0, 1).unwrap();
+        let before = s.snapshot(1.0).unwrap();
+        assert_eq!(s.observe_batch(1.1, 1000, 0.0, 1, 0, 4), Err(INVALID));
+        let after = s.snapshot(1.0).unwrap();
+        assert_eq!(after, before);
+        let admission = s.admission(1.1, 1, 0).unwrap();
+        assert_eq!(admission.reason, ADMISSION_TPS_RISK);
+        assert_eq!(admission.projected_tps, 40.0);
+    }
+
+    #[test]
+    fn zero_duration_without_tokens_does_not_extend_surface_qualification() {
         let mut s = State::new(50.0, 4).unwrap();
         s.observe_surface(1.0, 100, 0.1, 1, 0).unwrap();
-        s.observe_surface(59.0, 1000, 0.0, 1, 0).unwrap();
+        s.observe_surface(59.0, 0, 0.0, 1, 0).unwrap();
         let admission = s.admission(62.0, 1, 0).unwrap();
         assert_eq!(admission.reason, ADMISSION_UNKNOWN);
     }

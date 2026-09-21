@@ -234,8 +234,12 @@ The local implementation now uses ABI v3 and a bounded response surface:
   one controller transaction, so a failed observation cannot leave half a batch.
 - `pig_governor_new()` receives the native max running request bound; surface
   observations and admission forecasts above that deployment bound are invalid.
-- Surface qualification uses exposure in the current evidence window; a
-  zero-duration token event cannot refresh qualification or extend stale age.
+- Surface qualification uses exposure in the current evidence window. A
+  positive token delta with zero sequence-seconds is invalid and cannot enter
+  either TPS numerator; the Scheduler buffers same-timestamp tokens in a
+  bounded response-cell ledger and only joins them to positive exposure from
+  that same cell within the 60-second evidence window. A zero-token/zero-duration event cannot
+  refresh qualification or extend stale age.
 - A queued or active abort releases its reservation whenever Governor progress or
   a reservation exists, so cancellation before first Decode cannot leak state.
 - Admission is called before `grammar_manager.process_req_with_grammar(req)`.

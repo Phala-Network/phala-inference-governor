@@ -59,6 +59,22 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(admission["projected_tps"], 40.0)
         self.assertEqual(admission["evidence_concurrency"], 4)
 
+    def test_zero_sequence_tokens_are_rejected_without_mutation(self):
+        core = Governor(50, max_running_requests=4)
+        self.addCleanup(core.close)
+        core.observe_batch(1, 4, 0.1, 1, 0, 1)
+        before = core.snapshot(1)
+        with self.assertRaises(ValueError):
+            core.observe_surface(1.1, 1000, 0.0, 1, 0)
+        with self.assertRaises(ValueError):
+            core.observe_batch(1.1, 1000, 0.0, 1, 0, 4)
+        self.assertEqual(core.snapshot(1), before)
+        admission = core.admit(1.1, 1, 0)
+        self.assertFalse(admission["allowed"])
+        self.assertEqual(admission["reason"], 2)
+        self.assertEqual(admission["projected_tps"], 40.0)
+        self.assertEqual(admission["active_sequences"], 1)
+
     def test_surface_heavier_cell_is_safe_but_lighter_cell_is_not(self):
         core = Governor(50, max_running_requests=4)
         self.addCleanup(core.close)

@@ -74,6 +74,37 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn(("surface", 3, 3, 2.0, 1, 0), core.rows)
         self.assertEqual((progress.output_tokens, progress.decoding, progress.terminal, adapter.active), (4, True, False, 1))
 
+    def test_zero_time_tokens_are_buffered_until_positive_exposure(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        progress = Progress()
+        adapter.committed(progress, 1, 3, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 2)
+        adapter.committed(progress, 1, 5, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 4)
+        self.assertEqual(
+            [row for row in core.rows if row[0] == "surface"], []
+        )
+        adapter.committed(progress, 2, 6, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence, {})
+        self.assertIn(("surface", 2, 5, 1.0, 1, 0), core.rows)
+
+    def test_zero_time_tokens_never_cross_response_surface_cells(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        first = Progress()
+        second = Progress()
+        adapter.commit_batch(
+            [(first, 1, False, 0), (second, 1, False, 0)], 1
+        )
+        adapter.commit_batch(
+            [(first, 2, False, 0), (second, 2, True, 0)], 1
+        )
+        self.assertEqual(adapter._pending_evidence[(2, 0)][0], 2)
+        adapter.committed(first, 2, 3, pressure_class=0)
+        self.assertIn(("surface", 2, 1, 1.0, 1, 0), core.rows)
+        self.assertEqual(adapter._pending_evidence[(2, 0)][0], 2)
+
     def test_terminal_decode_records_interval_and_leaves_active(self):
         core = Core()
         adapter = SchedulerGovernor(core)
