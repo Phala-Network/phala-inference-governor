@@ -141,15 +141,20 @@ class SchedulerGovernor:
             )
             if waiting_count is None:
                 # Unit-level and compatibility callers may not have access to
-                # SGLang's separate ordinary/grammar queues. The reservation
-                # ledger still enforces the mutable running/waiting capacity.
+                # SGLang's separate ordinary/grammar queues. Keep their
+                # historical logical-capacity behavior; the native scheduler
+                # always supplies an exact waiting owner count.
                 waiting_before = max(0, self.outstanding - self.max_running)
+                projected_waiting = logical_projected_waiting
             else:
                 if type(waiting_count) is not int or not 0 <= waiting_count < 2**32:
                     raise ValueError("Invalid waiting_count")
                 waiting_before = waiting_count
-            if waiting_before >= 2**32 - 1:
-                raise ValueError("Waiting count overflow")
+                if waiting_before >= 2**32 - 1:
+                    raise ValueError("Waiting count overflow")
+                projected_waiting = max(
+                    logical_projected_waiting, waiting_before + 1
+                )
 
             pressure_class = self._request_pressure_class(req)
             # The TPS surface describes the physical SGLang runnable range. A
@@ -157,7 +162,6 @@ class SchedulerGovernor:
             projected_concurrency = min(
                 outstanding_after, self.native_max_running_requests
             )
-            projected_waiting = logical_projected_waiting
             projected_pressure = self._projected_pressure_class(pressure_class)
             decision = self._decorate_admission(
                 self.core.admit(now, projected_concurrency, projected_pressure),

@@ -88,6 +88,26 @@ class IntegrationTests(unittest.TestCase):
         self.adapter.admit_request(request, 0)
         return request
 
+    def test_native_waiting_rejection_records_reason5_without_reservation(self):
+        req = SimpleNamespace(
+            rid='native-waiting-limit',
+            origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+        )
+        decision = self.adapter.admit_request(req, 0, waiting_count=3)
+        snapshot = self.adapter.admission_snapshot()
+
+        self.assertFalse(decision['allowed'])
+        self.assertEqual(decision['reason_name'], 'waiting_limit')
+        self.assertEqual(decision['projected_waiting'], 4)
+        self.assertFalse(hasattr(req, 'governor_reservation'))
+        self.assertEqual(snapshot['attempts'], 1)
+        self.assertEqual(snapshot['rejects'], 1)
+        self.assertEqual(snapshot['reject_reasons'], {'waiting_limit': 1})
+        self.assertEqual(snapshot['waiting_count'], 3)
+        self.assertEqual(snapshot['projected_waiting'], 4)
+        self.assertEqual(snapshot['outstanding'], 0)
+
     def test_result_then_actual_abort_never_changes_native_resource_objects(self):
         req = self._request()
         req.output_ids_through_stop = [1, 2]

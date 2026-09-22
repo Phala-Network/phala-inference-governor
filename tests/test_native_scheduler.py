@@ -1,5 +1,6 @@
 """Actual SGLang methods and msgspec wire types with a real Rust controller."""
 from array import array
+import copy
 import time
 import unittest
 from types import SimpleNamespace
@@ -273,12 +274,63 @@ class GovernorHookTests(unittest.TestCase):
             'sglang.srt.managers.scheduler.validate_input_length', return_value=None
         ), patch(
             'sglang.srt.managers.scheduler.get_serving',
-            return_value=SimpleNamespace(allow_auto_truncate=False),
+            return_value=SimpleNamespace(
+                allow_auto_truncate=False, weight_version='v0'
+            ),
         ), patch(
             'sglang.srt.managers.scheduler.get_device',
             return_value=SimpleNamespace(mlx_enable_sampling=False),
         ):
             sched.handle_generate_request(recv_req)
+
+    def test_cold_native_burst_rejects_fourth_before_queue_handoffs(self):
+        sched, template_req, template_recv = self._admission_handoff()
+        sched.grammar_manager.process_req_with_grammar.return_value = False
+        sched._prefetch_kvcache = Mock()
+        output = Mock()
+        sched.ipc_channels = SimpleNamespace(
+            send_to_tokenizer=SimpleNamespace(send_output=output)
+        )
+        accepted = []
+        rejected = None
+
+        for index in range(4):
+            req = copy.copy(template_req)
+            recv_req = copy.copy(template_recv)
+            req.rid = recv_req.rid = f'cold-burst-{index}'
+            req.session = None
+            req.multimodal_inputs = None
+            req.http_worker_ipc = None
+            req.time_stats = SimpleNamespace(
+                set_wait_queue_entry_time=Mock(),
+                trace_ctx=SimpleNamespace(abort=Mock()),
+            )
+            with patch(
+                'sglang.srt.managers.scheduler.time.monotonic', return_value=1.0
+            ):
+                self._run_admission_handoff(sched, req, recv_req)
+            if index < 3:
+                accepted.append(req)
+            else:
+                rejected = req
+
+        self.assertEqual(sched.waiting_queue, accepted)
+        self.assertEqual(sched.governor.outstanding, 3)
+        self.assertEqual(sched.governor.last_admission['reason'], 5)
+        self.assertEqual(
+            sched.governor.last_admission['reason_name'], 'waiting_limit'
+        )
+        self.assertEqual(sched.governor.last_admission['projected_waiting'], 4)
+        output.assert_called_once()
+        abort, emitted_req = output.call_args.args
+        self.assertIs(emitted_req, rejected)
+        self.assertEqual(abort.finished_reason['status_code'], 429)
+        self.assertIsNone(getattr(rejected, 'governor_reservation', None))
+        rejected.time_stats.set_wait_queue_entry_time.assert_not_called()
+        self.assertEqual(
+            sched.grammar_manager.process_req_with_grammar.call_count, 3
+        )
+        self.assertEqual(sched._prefetch_kvcache.call_count, 3)
 
     def test_admitted_grammar_handoff_exception_releases_exactly_once(self):
         sched, req, recv_req = self._admission_handoff()
