@@ -11,13 +11,9 @@ _REQUIRED = {"expected_epoch", "expected_revision"}
 _MUTABLE = {"tps_reference", "max_waiting", "max_running"}
 
 
-def execute(owner, operation, now, payload=None):
-    if operation == "get":
-        if payload not in (None, {}):
-            raise ValueError("GET has no policy payload")
-        return owner.policy_snapshot(now)
-    if operation != "patch" or type(payload) is not dict:
-        raise ValueError("Invalid policy operation")
+def validate_patch(payload):
+    if type(payload) is not dict:
+        raise ValueError("Invalid policy payload")
     keys = set(payload)
     changes = keys & _MUTABLE
     if not changes or not _REQUIRED <= keys or keys - _REQUIRED - _MUTABLE:
@@ -36,10 +32,21 @@ def execute(owner, operation, now, payload=None):
         maximum = MAX_WAITING_LIMIT if name == "max_waiting" else 2**32 - 1
         if type(value) is not int or not minimum <= value <= maximum:
             raise ValueError(f"Invalid {name}")
+    return epoch, revision, {name: payload[name] for name in changes}
+
+
+def execute(owner, operation, now, payload=None):
+    if operation == "get":
+        if payload not in (None, {}):
+            raise ValueError("GET has no policy payload")
+        return owner.policy_snapshot(now)
+    if operation != "patch":
+        raise ValueError("Invalid policy operation")
+    epoch, revision, changes = validate_patch(payload)
     owner.update_policy(
         now,
         expected_epoch=epoch,
         expected_revision=revision,
-        **{name: payload[name] for name in changes},
+        **changes,
     )
     return owner.policy_snapshot(now)

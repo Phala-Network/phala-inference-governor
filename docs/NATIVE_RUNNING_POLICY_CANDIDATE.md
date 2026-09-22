@@ -28,14 +28,18 @@ checks chunk continuation despite a delayer denial, and stops continuation when
 physical KV slack is exhausted. Existing adapter tests verify forecast
 concurrency remains physical after policy changes.
 
-Candidate engine assembly is pending. The manifest records the old hook
-commit/tree only as a base, not the resulting source identity. The full hook
-patch remains independently replayable after the declared serving parent;
+The full three-file hook cleanly applies to the declared serving parent.
+The resulting local engine commit is
+`e02dfa1256c5d7d6e8b731d439229d5aca72cbe5`, tree
+`ae0e7307e3dcf2314b7eb51e26a17207073e0f0a`. Its scheduler is byte-identical
+to the development candidate. The full hook remains independently replayable;
 an incremental scheduler-only patch is also provided alongside the extracted
 installed source under the task's supplemental evidence directory.
 
 Local checks: scheduler-only full-patch reverse/replay is byte-exact with
 `core.autocrlf=false`; candidate and test syntax parse; both patch-manifest
-tests pass. CPU source-overlay execution and full three-file replay are pending
-the parent task. No image build, immutable-image qualification, GPU acceptance
+tests pass. The first CPU source-overlay suite ran 151 tests: 150 passed and
+one new identity-preservation fixture omitted required identity fields.
+That fixture has been corrected; the combined suite must pass before freezing
+the candidate. No image build, immutable-image qualification, GPU acceptance
 or production acceptance is claimed.

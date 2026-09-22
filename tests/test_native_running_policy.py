@@ -160,7 +160,10 @@ class NativeRunningPolicyTests(unittest.TestCase):
         self.assertEqual(self.factory.call_args.kwargs["max_running_requests"], 43)
 
     def test_policy_change_preserves_physical_capacity_and_identity(self):
-        identity = {"test": "immutable-runtime"}
+        from pig_governor.identity import build_runtime_identity
+        from test_sglang import IDENTITY_ENV, resolved_runtime
+
+        identity = build_runtime_identity(resolved_runtime(), environ=IDENTITY_ENV)
         self.s.governor.runtime_identity = identity
         epoch = self.core.epoch
         self.assertTrue(self.cas(1).updated)

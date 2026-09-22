@@ -42,32 +42,26 @@ class Reservation:
 class SchedulerGovernor:
     _CONTEXT_CLASS_UPPERS = (4_096, 16_384, 65_536)
 
-    def __init__(self, core, *, max_running_requests=1, max_running=None,
-                 max_waiting=MAX_WAITING_LIMIT):
+    @staticmethod
+    def _validate_limits(native_max_running, max_running, max_waiting):
         if (
-            type(max_running_requests) is not int
-            or max_running_requests <= 0
-            or max_running_requests >= 2**32
+            type(native_max_running) is not int
+            or not 0 < native_max_running < 2**32
         ):
             raise ValueError("Invalid native max_running_requests")
-        if max_running is None:
-            max_running = max_running_requests
-        if (
-            type(max_running) is not int
-            or max_running <= 0
-            or max_running > max_running_requests
-        ):
+        if type(max_running) is not int or not 0 < max_running <= native_max_running:
             raise ValueError("Invalid Governor max_running")
         if type(max_waiting) is not int or not 0 <= max_waiting <= MAX_WAITING_LIMIT:
             raise ValueError("Invalid Governor max_waiting")
-        if max_running + max_waiting >= 2**64:
-            raise ValueError("Governor admission capacity overflow")
+
+    def __init__(self, core, *, max_running_requests=1, max_running=None,
+                 max_waiting=MAX_WAITING_LIMIT):
+        if max_running is None:
+            max_running = max_running_requests
+        self._validate_limits(max_running_requests, max_running, max_waiting)
         self.core = core
         self._policy_lock = threading.RLock()
         self.active = 0
-        self.native_max_running_requests = max_running_requests
-        # Compatibility name used by existing component consumers. This is the
-        # immutable physical SGLang bound, not the mutable Governor policy.
         self.max_running_requests = max_running_requests
         self.max_running = max_running
         self.max_waiting = max_waiting
@@ -77,6 +71,10 @@ class SchedulerGovernor:
         self.active_pressure_counts = [0, 0, 0, 0]
         self._pending_evidence = {}
         self._surface_time = None
+
+    @property
+    def native_max_running_requests(self):
+        return self.max_running_requests
 
     @classmethod
     def _request_pressure_class(cls, req):
@@ -106,20 +104,6 @@ class SchedulerGovernor:
                 return index
         return candidate_class
 
-    def _decorate_admission(self, decision, projected_waiting):
-        result = dict(decision)
-        reason = result.get("reason")
-        if reason not in ADMISSION_REASON_NAMES:
-            raise RuntimeError("Governor returned an unknown admission reason")
-        result.update({
-            "reason_name": ADMISSION_REASON_NAMES[reason],
-            "projected_waiting": projected_waiting,
-            "max_waiting": self.max_waiting,
-            "max_running": self.max_running,
-            "native_max_running_requests": self.native_max_running_requests,
-        })
-        return result
-
     def admit_request(self, req, now, *, is_retracted=False, waiting_count=None):
         """Atomically forecast and reserve one native request.
 
@@ -147,11 +131,9 @@ class SchedulerGovernor:
                 waiting_before = max(0, self.outstanding - self.max_running)
                 projected_waiting = logical_projected_waiting
             else:
-                if type(waiting_count) is not int or not 0 <= waiting_count < 2**32:
+                if type(waiting_count) is not int or not 0 <= waiting_count < 2**32 - 1:
                     raise ValueError("Invalid waiting_count")
                 waiting_before = waiting_count
-                if waiting_before >= 2**32 - 1:
-                    raise ValueError("Waiting count overflow")
                 projected_waiting = max(
                     logical_projected_waiting, waiting_before + 1
                 )
@@ -163,10 +145,19 @@ class SchedulerGovernor:
                 outstanding_after, self.native_max_running_requests
             )
             projected_pressure = self._projected_pressure_class(pressure_class)
-            decision = self._decorate_admission(
-                self.core.admit(now, projected_concurrency, projected_pressure),
-                projected_waiting,
+            decision = dict(
+                self.core.admit(now, projected_concurrency, projected_pressure)
             )
+            reason = decision.get("reason")
+            if reason not in ADMISSION_REASON_NAMES:
+                raise RuntimeError("Governor returned an unknown admission reason")
+            decision.update({
+                "reason_name": ADMISSION_REASON_NAMES[reason],
+                "projected_waiting": projected_waiting,
+                "max_waiting": self.max_waiting,
+                "max_running": self.max_running,
+                "native_max_running_requests": self.native_max_running_requests,
+            })
             self.last_waiting_count = waiting_before
             # Keep TPS-first provenance. The waiting limit is evaluated only
             # after the physical projected cell is fit.
@@ -212,16 +203,9 @@ class SchedulerGovernor:
             )
             max_waiting = changes.get("max_waiting", self.max_waiting)
             max_running = changes.get("max_running", self.max_running)
-            if (
-                type(max_running) is not int
-                or max_running <= 0
-                or max_running > self.native_max_running_requests
-            ):
-                raise ValueError("Invalid Governor max_running")
-            if type(max_waiting) is not int or not 0 <= max_waiting <= MAX_WAITING_LIMIT:
-                raise ValueError("Invalid Governor max_waiting")
-            if max_running + max_waiting >= 2**64:
-                raise ValueError("Governor admission capacity overflow")
+            self._validate_limits(
+                self.native_max_running_requests, max_running, max_waiting
+            )
             # The core owns the epoch/revision CAS. Validate every Python field
             # before this sole mutating call; the assignments below cannot fail.
             self.core.update_reference(

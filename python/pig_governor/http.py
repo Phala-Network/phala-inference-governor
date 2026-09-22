@@ -5,9 +5,8 @@ import secrets
 from fastapi.responses import JSONResponse
 from sglang.srt.runtime_context import get_serving
 from starlette.requests import ClientDisconnect
-from .core import _finite
+from .admin import validate_patch
 from .profile import coverage, validate_profile
-from .scheduler import MAX_WAITING_LIMIT
 
 CONTROL_TIMEOUT = 5.0
 NO_STORE = {"Cache-Control": "no-store"}
@@ -46,9 +45,7 @@ def _expected_epoch(request):
     if len(items) != 1:
         raise ValueError("expected exactly one query parameter")
     name, epoch = items[0]
-    if name != "expected_epoch" or type(epoch) is not str or len(epoch) != 32:
-        raise ValueError("invalid expected epoch")
-    if any(c not in "0123456789abcdef" for c in epoch):
+    if name != "expected_epoch" or not _lower_hex(epoch, 32):
         raise ValueError("invalid expected epoch")
     return epoch
 
@@ -91,30 +88,7 @@ async def endpoint(manager, request):
                     result[name] = value
                 return result
             patch = json.loads(raw, object_pairs_hook=unique)
-            required = {"expected_epoch", "expected_revision"}
-            mutable = {"tps_reference", "max_waiting", "max_running"}
-            keys = set(patch) if type(patch) is dict else set()
-            changes = keys & mutable
-            if (
-                type(patch) is not dict
-                or not changes
-                or not required <= keys
-                or keys - required - mutable
-            ):
-                raise ValueError("invalid fields")
-            if "tps_reference" in changes:
-                _finite(patch["tps_reference"])
-            for name in changes & {"max_waiting", "max_running"}:
-                value = patch[name]
-                minimum = 0 if name == "max_waiting" else 1
-                maximum = MAX_WAITING_LIMIT if name == "max_waiting" else 2**32 - 1
-                if type(value) is not int or not minimum <= value <= maximum:
-                    raise ValueError(f"invalid {name}")
-            epoch, revision = patch["expected_epoch"], patch["expected_revision"]
-            if type(epoch) is not str or len(epoch) != 32 or any(c not in "0123456789abcdef" for c in epoch):
-                raise ValueError("invalid epoch")
-            if type(revision) is not int or not 0 < revision < 2**53:
-                raise ValueError("invalid revision")
+            validate_patch(patch)
         except (ValueError, UnicodeError, ClientDisconnect):
             return _response({"error": "invalid_request"}, status_code=400)
     async def operation():

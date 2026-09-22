@@ -73,6 +73,19 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SchedulerGovernor(Core(), max_running_requests=2**32)
 
+    def test_policy_update_rejects_none_without_mutation(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4, max_running=3)
+        before = (core.reference, core.revision, adapter.max_running)
+        with self.assertRaisesRegex(ValueError, "Invalid Governor max_running"):
+            adapter.update_policy(
+                1, expected_epoch=core.epoch, expected_revision=core.revision,
+                max_running=None,
+            )
+        self.assertEqual(
+            (core.reference, core.revision, adapter.max_running), before
+        )
+
     def test_first_decode_token_is_excluded_and_entering_exposure_starts(self):
         core = Core()
         adapter = SchedulerGovernor(core)
