@@ -122,6 +122,30 @@ state prevents a RID prefix match, retry or retraction from double releasing.
 Governor predicts the target state from measurements made at that state. It
 does not transform a current aggregate rate into an unobserved N+1 rate.
 
+An already-active decode run also supplies a negative-only safety bound after
+that run has committed at least one decode token. If its unscaled aggregate
+live TPS is below the reference, Governor rejects otherwise-fit expansion; it
+never uses aggregate TPS to admit an unknown target state. Idle history and a
+new run before its first committed decode token do not activate this bound.
+The admission result uses an internal current-active-run rolling window; the
+public aggregate snapshot intentionally keeps its existing cross-run 60-second
+history and is not the exact arithmetic source for this rejection reason.
+
+A run also ends when every old active request retires in one batch while new
+entrants keep the active count positive. Partial replacement with survivors
+continues the same run. The additive ABI-v4 `pig_governor_observe_replacement`
+entry point atomically records the retiring set's positive-duration evidence
+and clears only the private run rings and token flag. It leaves public history,
+surface cells, imported priors, epoch and revision intact. A zero-duration
+replacement passes zero native tokens; unflushable retired tokens are discarded.
+Entrants exclude their first token and retain any additional Decode tokens in
+Python pending evidence until positive exposure, including when the retiring
+set has a positive final interval. Native rejection leaves both native state and
+Python progress/pending state unchanged. Existing ABI-v4 structs and exported
+signatures are unchanged; this Python package explicitly requires the additive
+symbol and rejects an older library that lacks it.
+
+
 The bounded surface key is:
 
 ```text
@@ -162,6 +186,7 @@ reference == 0                                      -> fit (offline observation)
 qualified projected-cell lower bound >= reference  -> fit
 qualified projected-cell lower bound <  reference  -> tps_risk / 429
 no qualified projected-cell evidence               -> unknown / 429
+fit projected cell + current active-run TPS < ref   -> aggregate_tps_risk / 429
 TPS-fit projected_waiting > max_waiting             -> waiting_limit / 429
 ```
 

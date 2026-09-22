@@ -23,6 +23,7 @@ pub const ADMISSION_UNKNOWN: u32 = 4;
 /// predictor never emits this value, but ABI v4 consumers may report it in the
 /// composed admission decision.
 pub const ADMISSION_WAITING_LIMIT: u32 = 5;
+pub const ADMISSION_AGGREGATE_TPS_RISK: u32 = 6;
 
 const BUCKET_SECONDS: f64 = 0.5;
 const WINDOW_SECONDS: f64 = 60.0;
@@ -37,6 +38,7 @@ const MAX_SURFACE_AGE_SECONDS: f64 = 60.0;
 type Result<T> = std::result::Result<T, i32>;
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 struct Bucket {
     tick: i64,
     tokens: u64,
@@ -141,6 +143,7 @@ struct SurfaceBound {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 struct SurfaceCell {
     buckets: [Bucket; BUCKETS],
     last_time: Option<f64>,
@@ -236,12 +239,15 @@ impl SurfaceCell {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 struct State {
     buckets: [Bucket; BUCKETS],
+    active_run_buckets: [Bucket; BUCKETS],
     max_running_requests: u32,
     last_time: Option<f64>,
     observed: bool,
     active: u64,
+    active_run_has_tokens: bool,
     revision: u64,
     reference: f64,
     prefill_end: Option<f64>,
@@ -267,10 +273,12 @@ impl State {
         }
         Ok(Self {
             buckets: [EMPTY; BUCKETS],
+            active_run_buckets: [EMPTY; BUCKETS],
             max_running_requests,
             last_time: None,
             observed: false,
             active: 0,
+            active_run_has_tokens: false,
             revision: 1,
             reference,
             prefill_end: None,
@@ -319,6 +327,14 @@ impl State {
         bucket
     }
 
+    fn active_run_bucket(&mut self, tick: i64) -> &mut Bucket {
+        let bucket = &mut self.active_run_buckets[tick as usize % BUCKETS];
+        if bucket.tick != tick {
+            *bucket = Bucket { tick, ..EMPTY };
+        }
+        bucket
+    }
+
     fn advance(&mut self, now: f64) -> Result<()> {
         self.advance_clock(now, true)
     }
@@ -338,6 +354,7 @@ impl State {
                 }
                 let exposure = (end - start) * self.active as f64;
                 self.bucket(index).seconds += exposure;
+                self.active_run_bucket(index).seconds += exposure;
                 start = end;
             }
         }
@@ -369,9 +386,17 @@ impl State {
         Ok(())
     }
 
+    fn record_active_run_tokens(&mut self, now: f64, delta: u64) -> Result<()> {
+        let bucket = self.active_run_bucket(tick(now));
+        bucket.tokens = bucket.tokens.checked_add(delta).ok_or(INVALID)?;
+        Ok(())
+    }
+
     fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
+        let active_before = self.active;
         self.advance(now)?;
         self.record_tokens(now, delta)?;
+        self.update_active_run(active_before, active_after, now, delta)?;
         self.active = active_after;
         self.observed = true;
         Ok(())
@@ -422,6 +447,7 @@ impl State {
         }
 
         let mut next = self.clone();
+        let active_before = next.active;
         next.advance(now)?;
         let cell = next
             .surface
@@ -429,8 +455,41 @@ impl State {
             .or_insert_with(SurfaceCell::new);
         cell.observe(now, delta, sequence_seconds)?;
         next.record_tokens(now, delta)?;
+        next.update_active_run(active_before, active_after, now, delta)?;
         next.active = active_after;
         next.observed = true;
+        *self = next;
+        Ok(())
+    }
+
+    // The caller owns request identities and signals that every old request
+    // retired. Preserve public history and surface cells, but exclude all
+    // retiring-set evidence from the newly active set's private live bound.
+    fn observe_replacement(
+        &mut self,
+        now: f64,
+        delta: u64,
+        sequence_seconds: f64,
+        concurrency: u32,
+        pressure_class: u32,
+        active_after: u64,
+    ) -> Result<()> {
+        if self.active == 0 || u64::from(concurrency) != self.active
+            || active_after > u64::from(self.max_running_requests)
+            || pressure_class >= PRESSURE_CLASSES || !nonnegative(sequence_seconds)
+            || (sequence_seconds == 0.0 && delta != 0)
+        {
+            return Err(INVALID);
+        }
+        let mut next = self.clone();
+        if sequence_seconds > 0.0 {
+            next.observe_batch(now, delta, sequence_seconds, concurrency,
+                               pressure_class, active_after)?;
+        } else {
+            next.observe(now, 0, active_after)?;
+        }
+        next.active_run_buckets = [EMPTY; BUCKETS];
+        next.active_run_has_tokens = false;
         *self = next;
         Ok(())
     }
@@ -465,9 +524,11 @@ impl State {
             return Err(INVALID);
         }
         self.buckets = [EMPTY; BUCKETS];
+        self.active_run_buckets = [EMPTY; BUCKETS];
         self.last_time = Some(now);
         self.observed = false;
         self.active = active_after;
+        self.active_run_has_tokens = false;
         self.prefill_end = None;
         self.prefill_wall = 0.0;
         self.preference_until = 0.0;
@@ -526,6 +587,59 @@ impl State {
             }
         }
         Ok(false)
+    }
+
+    fn update_active_run(
+        &mut self,
+        active_before: u64,
+        active_after: u64,
+        now: f64,
+        delta: u64,
+    ) -> Result<()> {
+        if active_before == 0 && active_after > 0 {
+            self.active_run_buckets = [EMPTY; BUCKETS];
+            self.active_run_has_tokens = false;
+        }
+        if delta > 0 && (active_before > 0 || active_after > 0) {
+            self.record_active_run_tokens(now, delta)?;
+            self.active_run_has_tokens = true;
+        }
+        Ok(())
+    }
+
+    fn active_run_evidence(&self, now: f64, lookback: f64) -> Result<(u64, f64)> {
+        let first = tick(now - lookback);
+        let last = tick(now);
+        let mut tokens: u64 = 0;
+        let mut seconds = 0.0;
+        for bucket in &self.active_run_buckets {
+            if bucket.tick >= 0 && first <= bucket.tick && bucket.tick <= last {
+                tokens = tokens.checked_add(bucket.tokens).ok_or(INVALID)?;
+                seconds += bucket.seconds;
+            }
+        }
+        if !seconds.is_finite() {
+            return Err(INVALID);
+        }
+        Ok((tokens, seconds))
+    }
+
+    fn aggregate_live_lower_bound(&self, now: f64) -> Result<Option<f64>> {
+        if self.active == 0 || !self.active_run_has_tokens {
+            return Ok(None);
+        }
+        let (long_tokens, long_seconds) = self.active_run_evidence(now, WINDOW_SECONDS)?;
+        if long_seconds < MIN_EXPOSURE_SECONDS {
+            return Ok(None);
+        }
+        let long_tps = long_tokens as f64 / long_seconds;
+        let (short_tokens, short_seconds) = self.active_run_evidence(now, SHORT_WINDOW_SECONDS)?;
+        let bound = if short_seconds > 0.0 {
+            long_tps.min(short_tokens as f64 / short_seconds)
+        } else {
+            long_tps
+        };
+        Ok(Some(bound))
     }
 
     fn export_profile(&mut self, now: f64, capacity: usize) -> Result<Vec<ProfileCellV1>> {
@@ -638,6 +752,30 @@ impl State {
                 };
                 if replace {
                     selected = Some((key, bound));
+                }
+            }
+        }
+
+        if selected
+            .as_ref()
+            .is_some_and(|(_, bound)| bound.value >= reference)
+        {
+            if let Some(aggregate) = self.aggregate_live_lower_bound(now)? {
+                if aggregate < reference {
+                    return Ok(Admission {
+                        abi_version: ABI_VERSION,
+                        allowed: 0,
+                        reason: ADMISSION_AGGREGATE_TPS_RISK,
+                        observed: 1,
+                        reference,
+                        conservative_tps: aggregate,
+                        projected_tps: aggregate,
+                        projected_concurrency,
+                        pressure_class,
+                        evidence_concurrency: 0,
+                        evidence_pressure_class: 0,
+                        active_sequences: self.active,
+                    });
                 }
             }
         }
@@ -862,6 +1000,24 @@ pub unsafe extern "C" fn pig_governor_observe_batch(
                 pressure_class,
                 active_after,
             )
+        })
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pig_governor_observe_replacement(
+    handle: *mut Governor,
+    now: f64,
+    delta: u64,
+    sequence_seconds: f64,
+    concurrency: u32,
+    pressure_class: u32,
+    active_after: u64,
+) -> i32 {
+    guarded(|| {
+        transaction(handle, |state| {
+            state.observe_replacement(now, delta, sequence_seconds, concurrency,
+                                      pressure_class, active_after)
         })
     })
 }
@@ -1171,6 +1327,158 @@ mod tests {
             short_seconds: 1.0,
             approved_lower_tps: lower,
         }
+    }
+
+    #[test]
+    fn aggregate_live_vetoes_cross_cell_prior_bypass() {
+        let cells = [profile_cell(2, 0, 56.0)];
+        let mut s = State::new_with_profile(50.0, 4, 0.0, 120.0, &cells).unwrap();
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(6.84046809701249, 25, 6.84046809701249, 1, 0, 1)
+            .unwrap();
+
+        let current = s.admission(6.84046809701249, 1, 0).unwrap();
+        assert_eq!(current.reason, ADMISSION_TPS_RISK);
+        let projected = s.admission(6.84046809701249, 2, 0).unwrap();
+        assert_eq!(projected.allowed, 0);
+        assert_eq!(projected.reason, ADMISSION_AGGREGATE_TPS_RISK);
+        assert_eq!(projected.evidence_concurrency, 0);
+        assert_eq!(projected.observed, 1);
+        assert!((projected.projected_tps - 3.6547206485647545).abs() < 1e-12);
+    }
+
+    #[test]
+    fn aggregate_live_does_not_replace_post_rejection_or_unknown() {
+        let cells = [profile_cell(2, 0, 56.0)];
+        let mut exact = State::new_with_profile(50.0, 4, 0.0, 120.0, &cells).unwrap();
+        exact.observe(0.0, 0, 2).unwrap();
+        exact.observe_batch(1.0, 80, 2.0, 2, 0, 2).unwrap();
+        let rejected = exact.admission(1.0, 2, 0).unwrap();
+        assert_eq!(rejected.reason, ADMISSION_TPS_RISK);
+        assert_eq!(rejected.evidence_concurrency, 2);
+
+        let mut unknown = State::new(50.0, 4).unwrap();
+        unknown.observe(0.0, 0, 1).unwrap();
+        unknown.observe_batch(1.0, 10, 1.0, 1, 0, 1).unwrap();
+        let rejected = unknown.admission(1.0, 2, 0).unwrap();
+        assert_eq!(rejected.reason, ADMISSION_UNKNOWN);
+        assert_eq!(rejected.evidence_concurrency, 0);
+    }
+
+    #[test]
+    fn aggregate_live_requires_current_run_tokens_and_ignores_idle_history() {
+        let cells = [profile_cell(2, 0, 56.0)];
+        let mut s = State::new_with_profile(50.0, 4, 0.0, 120.0, &cells).unwrap();
+
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(1.0, 10, 1.0, 1, 0, 0).unwrap();
+        let idle = s.admission(1.0, 2, 0).unwrap();
+        assert_eq!(idle.reason, ADMISSION_COLD_PRIOR);
+
+        s.observe(2.0, 0, 1).unwrap();
+        let before_first_token = s.admission(2.2, 2, 0).unwrap();
+        assert_eq!(before_first_token.reason, ADMISSION_COLD_PRIOR);
+
+        s.observe_batch(2.3, 30, 0.1, 1, 0, 1).unwrap();
+        let after_good_token = s.admission(2.3, 2, 0).unwrap();
+        assert_eq!(after_good_token.reason, ADMISSION_COLD_PRIOR);
+        assert_eq!(after_good_token.projected_tps, 56.0);
+    }
+
+    #[test]
+    fn full_replacement_resets_only_private_run_evidence() {
+        for duration in [0.0, 1.0] {
+            let cells = [profile_cell(2, 0, 56.0)];
+            let mut s = State::new_with_profile(50.0, 4, 0.0, 120.0, &cells).unwrap();
+            s.observe(0.0, 0, 1).unwrap();
+            s.observe_batch(1.0, 1000, 1.0, 1, 0, 1).unwrap();
+            let revision = s.revision;
+            let now = 1.0 + duration;
+            let delta = if duration > 0.0 { 10 } else { 0 };
+            s.observe_replacement(now, delta, duration, 1, 0, 1).unwrap();
+            assert_eq!(s.revision, revision);
+            assert_eq!(s.snapshot(now).unwrap().tokens_60s, 1000 + delta);
+            assert_eq!(s.admission(now, 1, 0).unwrap().allowed, 1);
+            assert_eq!(s.admission(now, 2, 0).unwrap().reason, ADMISSION_COLD_PRIOR);
+            s.observe_batch(now + 1.0, 1, 1.0, 1, 0, 1).unwrap();
+            let result = s.admission(now + 1.0, 2, 0).unwrap();
+            assert_eq!(result.reason, ADMISSION_AGGREGATE_TPS_RISK);
+            assert_eq!(result.conservative_tps, 1.0);
+            assert_eq!(s.snapshot(now + 1.0).unwrap().tokens_60s, 1001 + delta);
+        }
+    }
+
+    #[test]
+    fn invalid_replacement_preserves_all_native_state() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(1.0, 1000, 1.0, 1, 0, 1).unwrap();
+        let before = format!("{:?}", s);
+        for (now, delta, duration, concurrency, pressure, active) in [
+            (0.5, 1, 1.0, 1, 0, 1),
+            (2.0, 1, 0.0, 1, 0, 1),
+            (2.0, 1, 1.0, 2, 0, 1),
+            (2.0, 1, 1.0, 1, 4, 1),
+            (2.0, 1, 1.0, 1, 0, 5),
+            (2.0, u64::MAX, 1.0, 1, 0, 1),
+        ] {
+            assert_eq!(s.observe_replacement(now, delta, duration, concurrency,
+                                             pressure, active), Err(INVALID));
+            assert_eq!(format!("{:?}", s), before);
+        }
+    }
+
+    #[test]
+    fn aggregate_live_detects_continuing_stall_and_recovers_with_live_work() {
+        let cells = [profile_cell(2, 0, 56.0)];
+        let mut s = State::new_with_profile(50.0, 4, 0.0, 120.0, &cells).unwrap();
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(1.0, 100, 1.0, 1, 0, 1).unwrap();
+        assert_eq!(s.admission(1.0, 2, 0).unwrap().reason, ADMISSION_COLD_PRIOR);
+
+        let stalled = s.admission(3.1, 2, 0).unwrap();
+        assert_eq!(stalled.reason, ADMISSION_AGGREGATE_TPS_RISK);
+        assert!(stalled.projected_tps < 50.0);
+
+        s.observe_batch(4.1, 300, 3.1, 1, 0, 1).unwrap();
+        let recovered = s.admission(4.1, 2, 0).unwrap();
+        assert_eq!(recovered.reason, ADMISSION_COLD_PRIOR);
+        assert!(recovered.allowed != 0);
+    }
+
+    #[test]
+    fn aggregate_live_stays_zero_after_tokens_age_out_and_can_recover() {
+        let cells = [profile_cell(2, 0, 56.0)];
+        let mut s = State::new_with_profile(50.0, 4, 0.0, 180.0, &cells).unwrap();
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(1.0, 100, 1.0, 1, 0, 1).unwrap();
+
+        let stalled = s.admission(62.1, 2, 0).unwrap();
+        assert_eq!(stalled.reason, ADMISSION_AGGREGATE_TPS_RISK);
+        assert_eq!(stalled.projected_tps, 0.0);
+
+        s.observe_batch(63.1, 4_000, 1.0, 1, 0, 1).unwrap();
+        let recovered = s.admission(63.1, 2, 0).unwrap();
+        assert_eq!(recovered.reason, ADMISSION_COLD_PRIOR);
+        assert!(recovered.allowed != 0);
+    }
+
+    #[test]
+    fn aggregate_live_reference_zero_and_cas_keep_evidence() {
+        let cells = [profile_cell(2, 0, 56.0)];
+        let mut s = State::new_with_profile(0.0, 4, 0.0, 120.0, &cells).unwrap();
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(1.0, 10, 1.0, 1, 0, 1).unwrap();
+        assert_eq!(
+            s.admission(1.0, 2, 0).unwrap().reason,
+            ADMISSION_REFERENCE_DISABLED
+        );
+
+        assert_eq!(s.update_reference(9, 50.0), Err(CONFLICT));
+        s.update_reference(1, 50.0).unwrap();
+        let rejected = s.admission(1.0, 2, 0).unwrap();
+        assert_eq!(rejected.reason, ADMISSION_AGGREGATE_TPS_RISK);
+        assert_eq!(rejected.projected_tps, 10.0);
     }
 
     #[test]

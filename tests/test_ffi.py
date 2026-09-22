@@ -54,6 +54,17 @@ class BindingCompatibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_new"):
                 Governor(50, max_running_requests=4, library=os.path.abspath("v4.dll"))
 
+    def test_v4_library_without_replacement_extension_is_rejected(self):
+        real = C.CDLL(os.environ["PIG_GOVERNOR_LIBRARY"])
+        class OldV4:
+            def __getattr__(self, name):
+                if name == "pig_governor_observe_replacement":
+                    raise AttributeError(name)
+                return getattr(real, name)
+        with mock.patch.object(core_module.C, "CDLL", return_value=OldV4()):
+            with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_observe_replacement"):
+                Governor(50, max_running_requests=4, library=os.path.abspath("old-v4.dll"))
+
 
 class NativeAbiTests(unittest.TestCase):
     def setUp(self):
@@ -226,6 +237,25 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(expiry.admit(0.999, 1, 0)["reason"], 3)
         self.assertEqual(expiry.admit(1, 1, 0)["reason"], 4)
         self.assertEqual(expiry.snapshot(1)["profile"]["cell_count"], 0)
+
+    def test_aggregate_live_cross_cell_veto_has_explicit_source(self):
+        core = Governor(
+            50,
+            max_running_requests=4,
+            profile_cells=[self.profile_cell(2, 0, 56)],
+            profile_ttl_seconds=120,
+            now=0,
+        )
+        self.addCleanup(core.close)
+        core.observe(0, 0, 1)
+        core.observe_batch(6.84046809701249, 25, 6.84046809701249, 1, 0, 1)
+
+        decision = core.admit(6.84046809701249, 2, 0)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], 6)
+        self.assertEqual(decision["evidence_source"], "aggregate_live")
+        self.assertEqual(decision["evidence_concurrency"], 0)
+        self.assertAlmostEqual(decision["projected_tps"], 3.6547206485647545)
 
     def test_profile_constructor_requires_complete_valid_input(self):
         with self.assertRaises(ValueError):

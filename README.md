@@ -40,7 +40,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.3` uses C ABI v4. Production runtime configuration binds a
+Component `0.2.4` uses C ABI v4. Production runtime configuration binds a
 frozen response-surface profile to the exact composed engine, Governor source,
 model artifact, hardware class and resolved SGLang settings:
 

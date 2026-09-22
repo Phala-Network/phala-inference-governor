@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from pig_governor import Governor
 from pig_governor.identity import RESOLVED_RUNTIME_FIELDS, build_runtime_identity
 from pig_governor.profile import build_profile_document, canonical_profile_bytes
+from pig_governor.scheduler import Progress, SchedulerGovernor
 from pig_governor.sglang import SglangGovernor, create, on_abort_emitted
 from unittest.mock import patch
 
@@ -107,6 +108,137 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(snapshot['waiting_count'], 3)
         self.assertEqual(snapshot['projected_waiting'], 4)
         self.assertEqual(snapshot['outstanding'], 0)
+
+    def test_aggregate_live_rejection_is_counted_without_reservation(self):
+        core = Governor(
+            50,
+            max_running_requests=4,
+            profile_cells=[{
+                "concurrency": 2,
+                "pressure_class": 0,
+                "long_tokens": 56,
+                "long_seconds": 1.0,
+                "short_tokens": 56,
+                "short_seconds": 1.0,
+                "evidence_lower_tps": 56.0,
+            }],
+            profile_ttl_seconds=120,
+            now=0,
+        )
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(core, max_running_requests=4)
+        first = SimpleNamespace(
+            rid='aggregate-owner', origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=16),
+        )
+        self.assertTrue(adapter.admit_request(first, 0)['allowed'])
+        core.observe(0, 0, 1)
+        core.observe_batch(6.84046809701249, 25, 6.84046809701249, 1, 0, 1)
+
+        second = SimpleNamespace(
+            rid='aggregate-rejected', origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=16),
+        )
+        decision = adapter.admit_request(second, 6.84046809701249)
+        snapshot = adapter.admission_snapshot()
+        self.assertFalse(decision['allowed'])
+        self.assertEqual(decision['reason_name'], 'aggregate_tps_risk')
+        self.assertEqual(decision['evidence_source'], 'aggregate_live')
+        self.assertFalse(hasattr(second, 'governor_reservation'))
+        self.assertEqual(snapshot['reject_reasons'], {'aggregate_tps_risk': 1})
+        self.assertEqual(snapshot['outstanding'], 1)
+
+    def test_pending_same_timestamp_tokens_do_not_cross_active_runs(self):
+        seed = Governor(0, max_running_requests=43)
+        try:
+            seed.observe_surface(0, 56, 1, 2, 0)
+            cells = seed.export_profile(0)
+        finally:
+            seed.close()
+        core = Governor(
+            50,
+            max_running_requests=43,
+            profile_cells=cells,
+            profile_ttl_seconds=120,
+            now=0,
+        )
+        self.addCleanup(core.close)
+        adapter = SchedulerGovernor(core, max_running_requests=43)
+        old = Progress()
+        new = Progress()
+
+        adapter.committed(old, 1, 1)
+        adapter.committed(old, 1, 101)
+        adapter.terminated(old, 1)
+        self.assertEqual(adapter._pending_evidence, {})
+        adapter.committed(new, 2, 1)
+        adapter.committed(new, 3, 2)
+
+        decision = core.admit(3, 2, 0)
+        self.assertFalse(decision['allowed'])
+        self.assertEqual(decision['reason'], 6)
+        self.assertEqual(decision['evidence_source'], 'aggregate_live')
+        self.assertEqual(decision['conservative_tps'], 1.0)
+
+    def test_full_replacement_isolates_new_set_from_fast_retired_set(self):
+        for replacement_time, initial_tokens in ((1, 1), (2, 1), (1, 3), (2, 3)):
+            with self.subTest(replacement_time=replacement_time, initial_tokens=initial_tokens):
+                core = Governor(50, max_running_requests=4, profile_cells=[{
+                    "concurrency": 2, "pressure_class": 0,
+                    "long_tokens": 56, "long_seconds": 1.0,
+                    "short_tokens": 56, "short_seconds": 1.0,
+                    "evidence_lower_tps": 56.0,
+                }], profile_ttl_seconds=120, now=0)
+                self.addCleanup(core.close)
+                adapter = SchedulerGovernor(core, max_running_requests=4)
+                old, new = Progress(), Progress()
+                adapter.committed(old, 0, 1)
+                adapter.committed(old, 1, 1001)
+                adapter.commit_batch([(old, 1002, True, 0),
+                                      (new, initial_tokens, False, 0)], replacement_time)
+                adapter.committed(new, replacement_time + 1, initial_tokens + 1)
+                decision = core.admit(replacement_time + 1, 2, 0)
+                self.assertFalse(decision['allowed'])
+                self.assertEqual(decision['reason'], 6)
+                self.assertEqual(decision['conservative_tps'], float(initial_tokens))
+
+    def test_partial_replacement_keeps_surviving_active_run_evidence(self):
+        core = Governor(50, max_running_requests=4, profile_cells=[{
+            "concurrency": 3, "pressure_class": 0,
+            "long_tokens": 56, "long_seconds": 1.0,
+            "short_tokens": 56, "short_seconds": 1.0,
+            "evidence_lower_tps": 56.0,
+        }], profile_ttl_seconds=120, now=0)
+        self.addCleanup(core.close)
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        old, survivor, new = Progress(), Progress(), Progress()
+        adapter.commit_batch([(old, 1, False, 0), (survivor, 1, False, 0)], 0)
+        adapter.commit_batch([(old, 1001, False, 0), (survivor, 1001, False, 0)], 1)
+        adapter.commit_batch([(old, 1001, True, 0), (new, 1, False, 0)], 1)
+        adapter.committed(new, 2, 2)
+        self.assertTrue(core.admit(2, 3, 0)['allowed'])
+
+    def test_replacement_late_native_rejection_rolls_back_python_and_native(self):
+        core = Governor(50, max_running_requests=4)
+        self.addCleanup(core.close)
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        old, new = Progress(), Progress()
+        adapter.committed(old, 0, 1)
+        adapter.committed(old, 0, 101)
+        native_before = core.snapshot(0)
+        before = (tuple(getattr(old, key) for key in old.__slots__), tuple(getattr(new, key) for key in new.__slots__), adapter.active,
+                  list(adapter.active_pressure_counts), dict(adapter._pending_evidence),
+                  adapter._surface_time)
+        original = core.observe_replacement
+        def invalid_active(now, delta, duration, concurrency, pressure, active):
+            return original(now, delta, duration, concurrency, pressure, 5)
+        with patch.object(core, "observe_replacement", side_effect=invalid_active):
+            with self.assertRaises(ValueError):
+                adapter.commit_batch([(old, 102, True, 0), (new, 3, False, 0)], 1)
+        self.assertEqual(core.snapshot(0), native_before)
+        self.assertEqual((tuple(getattr(old, key) for key in old.__slots__), tuple(getattr(new, key) for key in new.__slots__), adapter.active,
+                          list(adapter.active_pressure_counts), dict(adapter._pending_evidence),
+                          adapter._surface_time), before)
 
     def test_result_then_actual_abort_never_changes_native_resource_objects(self):
         req = self._request()

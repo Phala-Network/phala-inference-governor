@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pig-governor"
-version = "0.2.3"
+version = "0.2.4"
 description = "Independent soft throughput controller with explicit SGLang integration"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
