@@ -113,9 +113,11 @@ The exact v3 commit, tree and hook digest are retained in
 rewritten by the v4 release.
 The ABI v4 incident-repair candidate adds frozen profile bootstrap, strict static
 identity with a fail-closed KV-capacity floor, profile export and pre-enqueue TPS
-admission. The unchanged hook patch and its clean replay were validated on
-September 21, 2026; see the
-[original ABI v4 Linux record](docs/validation/governor-v4-linux-r1.json).
+admission. The first September 21, 2026
+[ABI v4 Linux record](docs/validation/governor-v4-linux-r1.json) belongs to the
+earlier `a43a9d30` engine. The current hook bytes and complete engine tree were
+cleanly replayed in the
+[r2 Linux record](docs/validation/governor-v4-linux-r2.json).
 Governor 0.2.2 adds the cross-start capacity compatibility repair and was
 revalidated on September 22, 2026 with 28 Rust tests, 138 Governor
 Python/FFI/SGLang tests, the ABI component contract and 10 native SGLang

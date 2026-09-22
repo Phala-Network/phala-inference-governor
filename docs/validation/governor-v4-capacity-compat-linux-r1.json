@@ -1,0 +1,99 @@
+{
+  "schema": "phala.governor-v4-capacity-compat-linux-validation.v1",
+  "date": "2026-09-22",
+  "scope": "Governor 0.2.2 source and native library tested on the authorized Linux CPU builder against the real composed SGLang v0.5.20 Python runtime. No GPU, final-image, C2 or production acceptance is claimed.",
+  "source": {
+    "governor_baseline_commit": "74e981760572420329468eef663e5dfcf4ba8f6b",
+    "governor_commit": "3269b009fd57b4b2032425804f16cfa08698c746",
+    "governor_tree": "e70a1f6d7915a531167346a458d2f0b69a69aed2",
+    "governor_version": "0.2.2",
+    "abi_version": 4,
+    "upstream_sglang_commit": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+    "complete_engine_commit": "354d47922eafa95ebc2d7bd63b7627d780a01c26",
+    "complete_engine_tree": "2733a3bae11d56e4bf3f694fbb49f8e9e156086d",
+    "governor_hook_sha256": "52087d47d575c95351e17e5335ac6ca5a3d5b6bb63548438502521ca524117ea"
+  },
+  "incident_regression": {
+    "profile_max_total_tokens": 954291,
+    "accepted_current_max_total_tokens": 954454,
+    "rejected_current_max_total_tokens": 954290,
+    "profile_and_current_identity_digests_are_distinct_and_individually_verified": true,
+    "admin_and_profile_metadata_are_checked": true
+  },
+  "source_sha256": {
+    "python/pig_governor/identity.py": "ecbab454301584cc7888e82fbdaf0db13d841a154015e5ab4e6ee03d81177fa2",
+    "python/pig_governor/profile.py": "10bc462774eb547b44885f3f6195e570700ec6de9d563c41d340acb51641c79e",
+    "python/pig_governor/sglang.py": "36c9f51239b3c1ffd5da8185e6d0c55f1bd240528d777483ea9a72e3625614f6",
+    "tests/test_identity.py": "f8d4c619de989e13a1a22926e0356181ea0d1068d812adcd3c430aa826486d18",
+    "tests/test_profile.py": "342fd735afef80d060335edeb527c8f1ed2c3b6265a8562e0b2b99b085be0841",
+    "tests/test_sglang.py": "57124f34786a2376249dcae966ca1671fc2856e61f32d1ba612d1df9de77c9b5"
+  },
+  "artifacts": {
+    "rust_builder": "rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0",
+    "rustc": "1.88.0 (6b00bc388 2025-06-23)",
+    "cargo": "1.88.0 (873a06493 2025-05-10)",
+    "sglang_test_image_id": "sha256:6b591c3e52b0cd0741b889b768c48c65bf3660cdae09484279d5aff30f591e91",
+    "sglang_test_image_role": "Dependency and real-runtime test environment only; it is not the Governor 0.2.2 release image.",
+    "release_library_sha256": "2141985e5b988f83205f1745a8e6a9162b1c5f18ef38315d55fd3d7a01c7c92a"
+  },
+  "sglang_runtime_match": {
+    "python/sglang/srt/entrypoints/http_server.py": "c5e62afcbc6547dbf7adc93bbf439b54e9b17b4880217a280bb39188556f5b6f",
+    "python/sglang/srt/managers/io_struct.py": "a29742a213878a2118b3ca2ca94e6e8567ff9c01d9efd071ee9db9be9d5d8eb2",
+    "python/sglang/srt/managers/scheduler.py": "5885f65aa4aeaf5df488d51285aa90ef81325837e8bce306fd8ac376943a4096",
+    "python/sglang/srt/entrypoints/openai/serving_base.py": "b358e2f534537a6da0d31076cce6d79d4a8778ecebc2ce816747fecb66c85b0e"
+  },
+  "checks": [
+    {
+      "name": "rust-unit",
+      "command": "cargo test --locked",
+      "passed": true,
+      "tests": 28
+    },
+    {
+      "name": "rust-release-check-and-build",
+      "command": "cargo check --release --all-targets --locked && cargo build --release --locked",
+      "passed": true
+    },
+    {
+      "name": "component-contract",
+      "command": "python scripts/check_component_contract.py",
+      "passed": true,
+      "abi_version": 4
+    },
+    {
+      "name": "governor-python-ffi-real-sglang",
+      "command": "python -m unittest discover -s tests -p test_*.py -v",
+      "passed": true,
+      "tests": 138
+    },
+    {
+      "name": "native-sglang-pre-header-errors",
+      "command": "python -m pytest -q test_streaming_pre_header_errors.py",
+      "passed": true,
+      "tests": 10
+    },
+    {
+      "name": "python-compileall-and-diff-check",
+      "passed": true
+    }
+  ],
+  "evidence_sha256": {
+    "final-rust-suite-20260922.log": "b9493b46a90ea20b1d843cd65db7170509700f58a7ebcb5d67e7c968b60235c7",
+    "final-component-contract-20260922.log": "cc8c25b5b0113cc2bf5c1633b01bc9be0645575521bab4ae533fc26e4729eaeb",
+    "final-full-sglang-suite-20260922.log": "bb55d6b58eb9710bdad65800c79edc19223c1f76017f4669b7fef9f5c6891f0e",
+    "native-pre-header-20260922.log": "6eab44fc4d5bbfbf9050369538c8e9714b61126de17d874d718073f0606f66e8"
+  },
+  "reused_unchanged_evidence": {
+    "clean_hook_replay": true,
+    "date": "2026-09-21",
+    "record": "governor-v4-linux-r2.json",
+    "reason": "Governor 0.2.2 changes component profile compatibility only; the current 52087d47 hook bytes and 354d4792/2733a3ba complete engine identity were already cleanly replayed by the r2 record."
+  },
+  "boundaries": {
+    "gpu_acceptance": false,
+    "immutable_image_acceptance": false,
+    "c2_offline_acceptance": false,
+    "redpill_fallback_acceptance": false,
+    "production_acceptance": false
+  }
+}

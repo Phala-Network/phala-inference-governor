@@ -1,0 +1,90 @@
+{
+  "schema": "phala.governor-v4-linux-validation.v1",
+  "date": "2026-09-21",
+  "scope": "Authorized Linux CPU builder and patched SGLang source; no GPU, final-image or production acceptance.",
+  "source": {
+    "governor_source_commit": "74e981760572420329468eef663e5dfcf4ba8f6b",
+    "governor_source_tree": "5a8e651aaa0c2a8318be47328bf129e2c148e0e5",
+    "upstream_sglang": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+    "serving_parent_commit": "63a21f09fcc26892a6d30c76945b783aa0eb3149",
+    "serving_parent_tree": "0a1c456602e7dbadacc55449bc64625b2797c3bc",
+    "pre_header_error_commit": "5871a82cb0ef1221126b8c9712881e497041bd38",
+    "pre_header_error_tree": "b0b36fb1d0b46410a6bd8c721ddb163237cc1be9",
+    "complete_engine_commit": "354d47922eafa95ebc2d7bd63b7627d780a01c26",
+    "complete_engine_tree": "2733a3bae11d56e4bf3f694fbb49f8e9e156086d",
+    "governor_hook_sha256": "52087d47d575c95351e17e5335ac6ca5a3d5b6bb63548438502521ca524117ea",
+    "governor_component_version": "0.2.1",
+    "governor_abi_version": 4
+  },
+  "artifacts": {
+    "rust_image": "rust:1.88-bookworm",
+    "rust_image_id": "sha256:1dc2982f2cd4ba58fff5557629297b31e4ef59c02d8a38594afe9b02f59c4bd2",
+    "sglang_test_image": "phala-sglang-pig-v4:7717f10-local",
+    "sglang_test_image_id": "sha256:f05a88e8eb4d78295d15d3cdeb0379d112dfb9b504b72319665c7aca78a68fca",
+    "release_library_sha256": "b453633f52bce6a8f0712f0ef62cf57893e6210015e26a4d8ddc66ff6fc18041"
+  },
+  "checks": [
+    {
+      "name": "rust-format",
+      "command": "cargo fmt --check --manifest-path rust/Cargo.toml",
+      "passed": true
+    },
+    {
+      "name": "rust-unit",
+      "command": "cargo test --locked",
+      "passed": true,
+      "tests": 28,
+      "log_sha256": "48cd58edb3826f19dfc7de5d86ffec5ef542588c1aba8e1a891debfb54bb794b"
+    },
+    {
+      "name": "rust-release-build",
+      "command": "cargo build --release --locked",
+      "passed": true,
+      "log_sha256": "222a02ed477d249a21359df8cae975864a62d848f4739cadc5b00b6190a963c6"
+    },
+    {
+      "name": "rust-release-check",
+      "command": "cargo check --release --all-targets --locked",
+      "passed": true,
+      "log_sha256": "6bfa9e18ffdef821c711a542cfebd7db0982665615563e5a191285e489609c6f"
+    },
+    {
+      "name": "component-contract",
+      "command": "python scripts/check_component_contract.py",
+      "passed": true,
+      "abi_version": 4,
+      "result_sha256": "07ab08f5c2f58f6b20254c17f9231bb220faa930ad39840c25234240ab25ad95"
+    },
+    {
+      "name": "governor-python-ffi-sglang",
+      "command": "python -m unittest discover -s tests -p test_*.py -v",
+      "passed": true,
+      "tests": 133,
+      "log_sha256": "05e81ea2b2b36ea3e8fa5bd09f86f36ce3653063ec5b1778d738ad46dfd05693"
+    },
+    {
+      "name": "native-sglang-pre-header-errors",
+      "command": "python -m pytest -q test/registered/unit/entrypoints/openai/test_streaming_pre_header_errors.py",
+      "passed": true,
+      "tests": 10,
+      "log_sha256": "a698f8da6e620f53160f89d31e59b7158d9970ea65527d0b183f5cd4410b7496"
+    },
+    {
+      "name": "python-compile-and-diff-check",
+      "passed": true
+    },
+    {
+      "name": "clean-patch-replay",
+      "passed": true,
+      "common_tree": "b0b36fb1d0b46410a6bd8c721ddb163237cc1be9",
+      "complete_tree": "2733a3bae11d56e4bf3f694fbb49f8e9e156086d"
+    }
+  ],
+  "boundaries": {
+    "gpu_acceptance": false,
+    "immutable_image_acceptance": false,
+    "c2_offline_acceptance": false,
+    "redpill_fallback_acceptance": false,
+    "production_acceptance": false
+  }
+}

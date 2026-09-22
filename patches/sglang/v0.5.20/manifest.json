@@ -55,7 +55,7 @@
     "component_contract_abi": 4,
     "clean_replay": true,
     "clean_replay_date": "2026-09-21",
-    "clean_replay_record": "../../../docs/validation/governor-v4-linux-r1.json",
+    "clean_replay_record": "../../../docs/validation/governor-v4-linux-r2.json",
     "gpu_acceptance": false,
     "image_acceptance": false,
     "production_acceptance": false
