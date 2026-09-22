@@ -17,6 +17,7 @@ ADMISSION_REASON_NAMES = {
     3: "cold_prior",
     4: "unknown",
     ADMISSION_REASON_WAITING_LIMIT: "waiting_limit",
+    6: "aggregate_tps_risk",
 }
 
 
@@ -240,6 +241,7 @@ class SchedulerGovernor:
         entering = [0, 0, 0, 0]
         leaving = [0, 0, 0, 0]
         total_delta = 0
+        entering_delta = 0
         proposed = []
 
         for progress, output_tokens, terminal, pressure_class in updates:
@@ -269,6 +271,7 @@ class SchedulerGovernor:
                 entering_request = output_tokens > 0 and not terminal
                 if entering_request:
                     entering[pressure_class] += 1
+                    entering_delta += delta
                 if terminal:
                     delta = 0
             if progress.decoding and terminal:
@@ -302,7 +305,34 @@ class SchedulerGovernor:
             key: value for key, value in self._pending_evidence.items()
             if now - value[1] <= 60.0
         }
-        if active_before > 0 and total_sequence_seconds > 0:
+        # A run ends when all old requests retire, even if entrants keep the
+        # active count positive. New entrants have no elapsed exposure yet.
+        full_replacement = active_before > 0 and sum(leaving) == active_before
+        if active_before == 0 or full_replacement:
+            prior_pending = pending_evidence
+            pending_evidence = {}
+        else:
+            prior_pending = pending_evidence
+        if full_replacement:
+            if entering_delta >= 2**64:
+                raise ValueError("Pending Decode token count overflow")
+            if entering_delta:
+                active_pressure_after = max(
+                    (index for index, count in enumerate(pressure_after) if count),
+                    default=0,
+                )
+                pending_evidence[(active_after, active_pressure_after)] = (entering_delta, now)
+            retired_delta = 0
+            if total_sequence_seconds > 0:
+                pending_tokens, _ = prior_pending.get(
+                    (active_before, active_pressure_before), (0, now)
+                )
+                retired_delta = total_delta - entering_delta + pending_tokens
+            self.core.observe_replacement(
+                now, retired_delta, total_sequence_seconds,
+                active_before, active_pressure_before, active_after,
+            )
+        elif active_before > 0 and total_sequence_seconds > 0:
             cell = (active_before, active_pressure_before)
             pending_tokens, _ = pending_evidence.pop(cell, (0, now))
             self.core.observe_batch(
@@ -328,6 +358,8 @@ class SchedulerGovernor:
                         raise ValueError("Pending Decode token count overflow")
                     pending_evidence[cell] = (pending_tokens, now)
             self.core.observe(now, 0, active_after)
+        if active_after == 0:
+            pending_evidence.clear()
         for progress, output_tokens, new_decoding, terminal, new_last_time in proposed:
             progress.output_tokens = output_tokens
             progress.decoding = new_decoding

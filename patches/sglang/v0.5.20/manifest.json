@@ -16,7 +16,7 @@
   },
   "component": {
     "repository": "https://github.com/Phala-Network/phala-inference-governor",
-    "version": "0.2.3",
+    "version": "0.2.4",
     "abi_version": 4
   },
   "patches": [

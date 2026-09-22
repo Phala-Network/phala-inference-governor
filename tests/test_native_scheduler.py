@@ -453,6 +453,7 @@ class GovernorHookTests(unittest.TestCase):
     def test_governor_admission_reject_returns_429_before_queue_insertion(self):
         cases = (
             ('tps_risk', 2, 'The request is rejected by Governor TPS admission.'),
+            ('aggregate_tps_risk', 6, 'The request is rejected by Governor TPS admission.'),
             ('waiting_limit', 5, 'The request is rejected by the Governor waiting limit.'),
         )
         for reason_name, reason, message in cases:

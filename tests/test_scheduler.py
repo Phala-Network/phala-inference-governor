@@ -9,6 +9,7 @@ class Core:
     def __init__(self):
         self.rows = []
         self.allowed = True
+        self.reason = 2
         self.last_time = None
         self.epoch = "1" * 32
         self.revision = 1
@@ -29,6 +30,14 @@ class Core:
         self.observe_surface(now, delta, duration, concurrency, pressure_class)
         self.observe(now, delta, active_after)
 
+    def observe_replacement(self, now, delta, duration, concurrency,
+                            pressure_class, active_after):
+        if duration > 0:
+            self.observe_batch(now, delta, duration, concurrency,
+                               pressure_class, active_after)
+        else:
+            self.observe(now, 0, active_after)
+
     def admit(self, now, projected_concurrency, pressure_class):
         self.rows.append(
             ("admit", now, projected_concurrency, pressure_class)
@@ -36,7 +45,7 @@ class Core:
         return {
             "allowed": self.allowed,
             "projected_tps": 100 if self.allowed else 10,
-            "reason": 0 if self.allowed else 2,
+            "reason": self.reason if not self.allowed else 0,
         }
 
     def snapshot(self, now):
@@ -158,6 +167,73 @@ class LifecycleTests(unittest.TestCase):
         adapter.committed(first, 2, 3, pressure_class=0)
         self.assertIn(("surface", 2, 1, 1.0, 1, 0), core.rows)
         self.assertEqual(adapter._pending_evidence[(2, 0)][0], 2)
+
+    def test_zero_time_tokens_are_cleared_when_active_run_ends(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        old = Progress()
+        new = Progress()
+
+        adapter.committed(old, 1, 1, pressure_class=0)
+        adapter.committed(old, 1, 101, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 100)
+        adapter.terminated(old, 1, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence, {})
+
+        adapter.committed(new, 2, 1, pressure_class=0)
+        adapter.committed(new, 3, 2, pressure_class=0)
+        self.assertIn(("surface", 3, 1, 1.0, 1, 0), core.rows)
+
+    def test_zero_time_full_replacement_keeps_only_new_run_pending_tokens(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        old = Progress()
+        new = Progress()
+
+        adapter.committed(old, 1, 1, pressure_class=0)
+        adapter.committed(old, 1, 101, pressure_class=0)
+        adapter.commit_batch(
+            [(old, 102, True, 0), (new, 3, False, 0)],
+            1,
+        )
+        self.assertEqual(adapter.active, 1)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 2)
+
+        adapter.committed(new, 2, 4, pressure_class=0)
+        self.assertIn(("surface", 2, 3, 1.0, 1, 0), core.rows)
+
+    def test_positive_time_replacement_defers_only_entrant_decode_tokens(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        old, new = Progress(), Progress()
+        adapter.committed(old, 0, 1)
+        adapter.committed(old, 0, 101)
+        adapter.commit_batch([(old, 102, True, 0), (new, 3, False, 0)], 1)
+        self.assertIn(("surface", 1, 101, 1.0, 1, 0), core.rows)
+        self.assertEqual(adapter._pending_evidence, {(1, 0): (2, 1)})
+        adapter.committed(new, 2, 4)
+        self.assertIn(("surface", 2, 3, 1.0, 1, 0), core.rows)
+
+    def test_replacement_native_failure_does_not_publish_python_state(self):
+        class FailingCore(Core):
+            def observe_replacement(self, *args):
+                raise ValueError("native rejected")
+        core = FailingCore()
+        adapter = SchedulerGovernor(core)
+        old, new = Progress(), Progress()
+        adapter.committed(old, 0, 1)
+        adapter.committed(old, 0, 101)
+        before = (tuple(getattr(old, key) for key in old.__slots__), tuple(getattr(new, key) for key in new.__slots__), adapter.active,
+                  list(adapter.active_pressure_counts),
+                  dict(adapter._pending_evidence), adapter._surface_time,
+                  list(core.rows))
+        with self.assertRaisesRegex(ValueError, "native rejected"):
+            adapter.commit_batch([(old, 102, True, 0), (new, 3, False, 0)], 1)
+        after = (tuple(getattr(old, key) for key in old.__slots__), tuple(getattr(new, key) for key in new.__slots__), adapter.active,
+                 list(adapter.active_pressure_counts),
+                 dict(adapter._pending_evidence), adapter._surface_time,
+                 list(core.rows))
+        self.assertEqual(after, before)
 
     def test_terminal_decode_records_interval_and_leaves_active(self):
         core = Core()
@@ -381,6 +457,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(decision["reason"], 2)
         self.assertEqual(decision["reason_name"], "tps_risk")
         self.assertEqual(decision["projected_waiting"], 4)
+
+    def test_aggregate_tps_reason_is_preserved_by_scheduler(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        core.allowed = False
+        core.reason = 6
+        decision = adapter.admit_request(request("aggregate-low"), 2)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], 6)
+        self.assertEqual(decision["reason_name"], "aggregate_tps_risk")
 
     def test_policy_update_is_atomic_and_uses_native_tps_projection(self):
         core = Core()
