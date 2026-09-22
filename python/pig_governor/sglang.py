@@ -213,11 +213,26 @@ class SglangGovernor(SchedulerGovernor):
                 "sha256": (
                     None if self.loaded_profile is None else self.loaded_profile.sha256
                 ),
+                "runtime_identity_sha256": (
+                    None
+                    if self.loaded_profile is None
+                    else self.loaded_profile.metadata["runtime_identity_sha256"]
+                ),
                 "coverage_count": (
                     0 if self.loaded_profile is None
                     else self.loaded_profile.coverage_count
                 ),
                 "coverage_total": self.native_max_running_requests * 4,
+                "profile_max_total_tokens": (
+                    None
+                    if self.loaded_profile is None
+                    else self.loaded_profile.metadata["profile_max_total_tokens"]
+                ),
+                "current_max_total_tokens": (
+                    None
+                    if self.runtime_identity is None
+                    else self.runtime_identity["runtime"]["max_total_tokens"]
+                ),
             }
             return snapshot
 

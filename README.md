@@ -2,8 +2,9 @@
 
 PIG Governor is an independent Rust controller and thin Python adapter for
 SGLang. It uses actual Decode token progress and sequence time to provide bounded
-scheduling advice around a soft average-TPS reference. It does not impose a
-per-request TPS floor or a hard queue/TTFT rejection rule.
+scheduling advice around a soft average-TPS reference, followed by explicit
+`max_running` and `max_waiting` admission bounds. It does not impose a
+per-request TPS floor, queue-age limit or TTFT rejection rule.
 
 This project is separate from [Phala Inference Guard](https://github.com/Phala-Network/phala-inference-guard)
 and [PIG TAIL](https://github.com/Phala-Network/pig-tail). TAIL owns transport and
@@ -39,7 +40,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.0` uses C ABI v4. Production runtime configuration binds a
+Component `0.2.2` uses C ABI v4. Production runtime configuration binds a
 frozen response-surface profile to the exact composed engine, Governor source,
 model artifact, hardware class and resolved SGLang settings:
 
@@ -56,11 +57,14 @@ PIG_RUNTIME_HARDWARE_ID=h200-sxm-tp1-v1
 ```
 
 With a positive reference, both profile variables are required and the profile
-must be unexpired, identity-matched and cover every reachable response-surface
-cell through exact or jointly-heavier evidence. `PIG_TPS_REFERENCE=0` is the
-explicit offline sampling mode and may start without a profile. Runtime/model
-identity changes clear prior and live evidence, rotate the CAS epoch and fail
-closed until fresh qualified evidence exists.
+must be unexpired and cover every reachable response-surface cell through exact
+or jointly-heavier evidence. Static runtime identity fields must match exactly.
+The probed `runtime.max_total_tokens` is a minimum capacity: the current runtime
+may load a profile only when its capacity is greater than or equal to the sampled
+capacity. Any decrease fails closed. `PIG_TPS_REFERENCE=0` is the explicit
+offline sampling mode and may start without a profile. Runtime/model identity
+changes clear prior and live evidence, rotate the CAS epoch and fail closed until
+fresh qualified evidence exists.
 
 Production uses the official `sglang serve` command. With the supplied auth patch,
 `PIG_AUTH_FROM_TOKEN=1` reads the existing deployment `TOKEN` for both API and
@@ -70,11 +74,12 @@ redacts keys without altering runtime configuration or internal IPC.
 
 ## External policy API
 
-Authenticated `GET/PATCH /admin/v1/predictive-policy` reads and updates the soft
-`tps_reference`. PATCH requires `expected_epoch` and `expected_revision` for CAS.
-A successful hot update neither restarts the model nor resets actual history.
-`tps_reference=0` is the explicit C2 offline sampling mode; a CAS update from 0
-to the production reference preserves the learned response surface.
+Authenticated `GET/PATCH /admin/v1/predictive-policy` reads and atomically updates
+the soft `tps_reference` plus hard `max_running` and `max_waiting` bounds. PATCH
+requires `expected_epoch` and `expected_revision` for CAS. A successful hot update
+neither restarts the model nor resets actual history. `tps_reference=0` is the
+explicit C2 offline sampling mode; a CAS update from 0 to the production reference
+preserves the learned response surface.
 
 Authenticated `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` exports
 one epoch-guarded, non-cacheable envelope containing the exact runtime identity,
@@ -93,8 +98,10 @@ logs together with metrics:
 Admission is TPS-first and occurs before SGLang's grammar or ordinary waiting
 queue. It forecasts the candidate's projected `(Decode concurrency, context
 pressure)` cell from measured per-user Decode evidence, and returns HTTP 429 when
-that cell is unqualified or falls below the reference. There is no fixed waiting
-or inflight cap; waiting is not itself a rejection condition.
+that cell is unqualified or falls below the reference. A TPS-fit request is then
+rejected when admitting it would exceed `max_running + max_waiting`; production
+defaults are 43 running and 3 waiting. Waiting below that bound is not by itself a
+rejection condition.
 The Rust core has no third-party dependencies; its versioned C ABI is loaded by
 ctypes from a prebuilt library, without runtime Cargo builds.
 
@@ -104,13 +111,18 @@ The split patch composition and prior CPU evidence remain historical provenance.
 The exact v3 commit, tree and hook digest are retained in
 [the frozen v3 provenance record](docs/V3_FROZEN_PROVENANCE.md) and must not be
 rewritten by the v4 release.
-The ABI v4 incident-repair candidate adds frozen profile bootstrap, exact runtime
-identity, profile export and pre-enqueue TPS admission. Its deterministic hook
-patch, clean replay, Linux Rust/FFI/SGLang suite and native pre-header HTTP error
-regression passed on September 21, 2026; see the
-[Linux validation record](docs/validation/governor-v4-linux-r1.json). Composed
-image, GPU and authorized C2 validation remain pending. The previous mixed-source
-v0.1.0 image is historical and is not a deployment candidate.
+The ABI v4 incident-repair candidate adds frozen profile bootstrap, strict static
+identity with a fail-closed KV-capacity floor, profile export and pre-enqueue TPS
+admission. The unchanged hook patch and its clean replay were validated on
+September 21, 2026; see the
+[original ABI v4 Linux record](docs/validation/governor-v4-linux-r1.json).
+Governor 0.2.2 adds the cross-start capacity compatibility repair and was
+revalidated on September 22, 2026 with 28 Rust tests, 138 Governor
+Python/FFI/SGLang tests, the ABI component contract and 10 native SGLang
+pre-header HTTP error tests; see the
+[0.2.2 Linux validation record](docs/validation/governor-v4-capacity-compat-linux-r1.json).
+Composed-image, GPU and authorized C2 validation remain pending. The previous
+mixed-source v0.1.0 image is historical and is not a deployment candidate.
 
 Historical validation includes real SGLang lifecycle, HTTP/CAS/auth, cancellation,
 parallel sampling and queue-time regressions. The affected auth/lifecycle suite
@@ -126,7 +138,7 @@ See [development acceptance](docs/validation/DEV_V0520_ACCEPTANCE.md) for exact
 runtime identity, retained failed probes and evidence boundaries. Strict dynamic
 platform policy failed; launch/model measurement coverage remains unproven.
 Final-image verification, reproducible image publication and the authorized
-production test remain pending. Package version 0.2.0 identifies the ABI v4
+production test remain pending. Package version 0.2.2 identifies the ABI v4
 source candidate; it is not a claim that those release gates have passed.
 Historical v0.1.0 tags, the 0.1.1 source state and mixed-source image evidence
 remain unchanged.

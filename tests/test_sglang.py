@@ -1,8 +1,13 @@
 """Explicit adapter behavior with native-shaped CPU fixtures."""
+import hashlib
+from pathlib import Path
+import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from pig_governor import Governor
 from pig_governor.identity import RESOLVED_RUNTIME_FIELDS, build_runtime_identity
+from pig_governor.profile import build_profile_document, canonical_profile_bytes
 from pig_governor.sglang import SglangGovernor, create, on_abort_emitted
 from unittest.mock import patch
 
@@ -275,6 +280,87 @@ class IntegrationTests(unittest.TestCase):
              patch('pig_governor.sglang.get_context', return_value=context):
             with self.assertRaisesRegex(ValueError, 'PIG_TPS_PROFILE'):
                 create(SimpleNamespace(), is_generation=True)
+
+    def test_create_accepts_only_non_decreasing_profile_capacity(self):
+        parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
+        schedule = SimpleNamespace(disable_overlap_schedule=True, max_running_requests=43)
+        disagg = SimpleNamespace(disaggregation_mode='null')
+        profile_identity = build_runtime_identity(
+            resolved_runtime(max_total_tokens=954291), environ=IDENTITY_ENV
+        )
+        cells = [
+            {
+                'concurrency': concurrency,
+                'pressure_class': pressure,
+                'long_tokens': 100,
+                'long_seconds': 1.0,
+                'short_tokens': 100,
+                'short_seconds': 1.0,
+                'evidence_lower_tps': 100.0,
+            }
+            for concurrency in range(1, 44)
+            for pressure in range(4)
+        ]
+        document = build_profile_document(profile_identity, 43, cells)
+        data = canonical_profile_bytes(document)
+        digest = hashlib.sha256(data).hexdigest()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, 'profile.json')
+            path.write_bytes(data)
+            environment = {
+                **IDENTITY_ENV,
+                'PIG_GOVERNOR_ENABLE': '1',
+                'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
+                'PIG_TPS_REFERENCE': '50',
+                'PIG_TPS_PROFILE_PATH': str(path),
+                'PIG_TPS_PROFILE_SHA256': digest,
+                'PIG_MAX_RUNNING': '43',
+                'PIG_MAX_WAITING': '3',
+            }
+
+            for current_tokens, accepted in ((954454, True), (954290, False)):
+                context = SimpleNamespace(
+                    resolved_server_args_dict=lambda value=current_tokens: resolved_runtime(
+                        max_total_tokens=value
+                    )
+                )
+                with self.subTest(current_tokens=current_tokens), patch.dict(
+                    'pig_governor.sglang.os.environ', environment, clear=True
+                ), patch(
+                    'pig_governor.sglang.get_parallel', return_value=parallel
+                ), patch(
+                    'pig_governor.sglang.get_schedule', return_value=schedule
+                ), patch(
+                    'pig_governor.sglang.get_disagg', return_value=disagg
+                ), patch(
+                    'pig_governor.sglang.get_context', return_value=context
+                ):
+                    if not accepted:
+                        with self.assertRaisesRegex(
+                            ValueError, 'profile requires at least 954291'
+                        ):
+                            create(SimpleNamespace(), is_generation=True)
+                        continue
+                    adapter = create(SimpleNamespace(), is_generation=True)
+                    self.addCleanup(adapter.core.close)
+                    self.assertEqual(
+                        adapter.loaded_profile.metadata['profile_max_total_tokens'],
+                        954291,
+                    )
+                    self.assertEqual(
+                        adapter.loaded_profile.metadata['current_max_total_tokens'],
+                        954454,
+                    )
+                    policy = adapter.policy_snapshot(time.monotonic())
+                    self.assertEqual(
+                        policy['profile_bootstrap']['profile_max_total_tokens'],
+                        954291,
+                    )
+                    self.assertEqual(
+                        policy['profile_bootstrap']['current_max_total_tokens'],
+                        954454,
+                    )
 
     def test_create_rejects_invalid_mutable_limits(self):
         parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)

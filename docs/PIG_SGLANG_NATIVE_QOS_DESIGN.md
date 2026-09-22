@@ -32,7 +32,7 @@ PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代
 - 公共清单、校验器、完整发布分支由本任务统一整合；模型任务提交增量和证据。GitHub 继承 workflow 启停/旧 PR 行政收尾由流程管理任务单独负责，避免并发改状态。
 - 当前冻结候选：serving 9b6580d、Governor bcc37a3(0.1.1)、engine 828500b/tree 0d159027。源码红绿及受影响回归保留；prepare/runner 22项测试和实际完整tree验证已通过，真实镜像未构建。冻结输入不因本次流程调整作废。
 - v3 冻结 provenance 的 Governor main commit、tree 和 hook SHA256 原样记录在 [`V3_FROZEN_PROVENANCE.md`](V3_FROZEN_PROVENANCE.md)；v4 只能新增发布身份，不得覆盖该记录。
-- 2026-09-21 incident-repair 候选为 Governor 0.2.1 / C ABI v4：正 reference 启动必须加载与完整 runtime identity 匹配、未过期、hash 固定且 coverage 完整的 response-surface profile；reference 0 可无 profile 离线采集。TPS 通过后还执行可热调的 `max_running`/`max_waiting` 准入门禁，生产默认 43/3。该候选尚未替代上一条历史冻结证据，必须完成 Linux、GPU、组合镜像与 C2 验收后才可发布。
+- 2026-09-22 incident-repair 候选为 Governor 0.2.2 / C ABI v4：正 reference 启动必须加载未过期、hash 固定且 coverage 完整的 response-surface profile；静态 runtime identity 严格匹配，动态探测的 `max_total_tokens` 仅允许当前容量不低于采样容量。reference 0 可无 profile 离线采集。TPS 通过后还执行可热调的 `max_running`/`max_waiting` 准入门禁，生产默认 43/3。该候选尚未替代上一条历史冻结证据，必须完成 Linux、GPU、组合镜像与 C2 验收后才可发布。
 - 整合次序：先将现有20项选择收敛为单一有序manifest并证明tree等价，再接入GLM/DS/Kimi增量；v0.5.19多模型历史逐项审查重叠、上游覆盖与XGrammar依赖，不盲目叠加。需要修改行为时补受影响回归，不重跑无关GPU实验。
 - 标准builder可用64.4GB；实测历史同基线压缩层15.1GB、解压tar36.6GB、OCI15.1GB，尚不足覆盖保守全新构建峰值。保留旧OCI，容量解决前不启动大构建。
 - 源码/CI/镜像/部署分别记录。e4尚未部署；部署授权仍仅e4，不扩大CVM或路由范围。平均TPS软目标和鉴权热更新合同不变。
@@ -45,7 +45,7 @@ PIG/TAIL 开发结果以准确 commit 和测试证据交接；本地测试不代
   用 reservation ledger 的逻辑 projected waiting 执行 `max_waiting <= 3`
   二级硬上限；真实 native waiting 仅作 telemetry，不按队龄或 TTFT 做拒绝。
 - 外部鉴权 `GET/PATCH /admin/v1/predictive-policy` 用一个 epoch/revision CAS 原子更新 `tps_reference`、`max_running`、`max_waiting`；热修改不重启模型、不清空真实历史或驱逐存量请求。
-- 外部鉴权 `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` 导出不可缓存的严格 envelope；identity 或 runtime 变化清空 prior/live surface 并旋转 epoch，旧 profile 不得放宽新身份。
+- 外部鉴权 `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` 导出不可缓存的严格 envelope；运行中 identity 或 runtime 变化仍清空 prior/live surface 并旋转 epoch。跨启动加载只对动态探测的 KV 容量采用单向门禁，旧 profile 不得用于更小容量。
 - Rust 核只处理真实 Decode tokens/序列秒数和有界调度建议；不拥有 Req、KV/cache、tensor、ACK 或资源释放权，不把预测 token 写入实测窗口。
 - Python 接入复用原生生命周期、控制 IPC；worker 同步、真实分配和取消清理由 SGLang 原生路径拥有。
 - TAIL 的信任/TEE 边界保持独立；旧全预测、日志、资格门等实验实现不机械迁入 Rust。原 A–F 中仍有意义的性能、资源与可信链验证继续保留，不能用旧测试数量替代新架构验收。

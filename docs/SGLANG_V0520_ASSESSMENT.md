@@ -68,8 +68,10 @@ matching the updated native middleware.
 The post-result hook still belongs after native result processors and before
 _record_step_counters. Req remains extensible and output_ids_through_stop retains
 the required committed-output semantics. Keep native cache/chunk-abort processing
-ahead of any Governor prefill-defer decision. The later 0.2.1 policy adds the
-Scheduler-owned post-admit waiting gate without changing this ordering.
+ahead of any Governor prefill-defer decision. The 0.2.1 policy added the
+Scheduler-owned post-admit waiting gate without changing this ordering. The
+0.2.2 repair keeps live identity changes strict while treating the sampled
+`max_total_tokens` as a fail-closed minimum during cross-start profile loading.
 
 The request-correlated control_nonce fix is still needed: upstream
 communicator.py has no equivalent correlation mechanism. Preserve payload types,

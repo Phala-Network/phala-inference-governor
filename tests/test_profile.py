@@ -126,7 +126,7 @@ class ProfileTests(unittest.TestCase):
             **kwargs,
         )
 
-    def write_and_load(self, content, *, digest=None):
+    def write_and_load(self, content, *, digest=None, current_identity=None):
         if isinstance(content, dict):
             content = canonical_profile_bytes(content)
         elif isinstance(content, str):
@@ -135,7 +135,13 @@ class ProfileTests(unittest.TestCase):
             path = Path(directory, "profile.json")
             path.write_bytes(content)
             expected = digest or hashlib.sha256(content).hexdigest()
-            return load_profile(path, expected, self.identity, 2, NOW)
+            return load_profile(
+                path,
+                expected,
+                self.identity if current_identity is None else current_identity,
+                2,
+                NOW,
+            )
 
     def test_valid_profile_returns_core_cells_and_full_coverage(self):
         loaded = self.write_and_load(self.document)
@@ -152,6 +158,33 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(loaded.missing, ())
         self.assertEqual(loaded.ttl_seconds, 86400.0)
         self.assertRegex(loaded.sha256, r"^[0-9a-f]{64}$")
+
+    def test_profile_capacity_is_a_fail_closed_minimum(self):
+        profile_runtime = resolved_runtime()
+        profile_runtime["max_total_tokens"] = 954291
+        profile_identity = build_runtime_identity(profile_runtime, ENVIRONMENT)
+        document = copy.deepcopy(self.document)
+        document["runtime_identity"] = profile_identity
+        larger_runtime = resolved_runtime()
+        larger_runtime["max_total_tokens"] = 954454
+        larger = build_runtime_identity(larger_runtime, ENVIRONMENT)
+        loaded = self.write_and_load(document, current_identity=larger)
+        self.assertNotEqual(profile_identity["sha256"], larger["sha256"])
+        self.assertEqual(
+            loaded.metadata["runtime_identity_sha256"], profile_identity["sha256"]
+        )
+        self.assertEqual(loaded.metadata["current_runtime_identity_sha256"], larger["sha256"])
+        self.assertEqual(loaded.metadata["profile_max_total_tokens"], 954291)
+        self.assertEqual(loaded.metadata["current_max_total_tokens"], 954454)
+
+        for current_tokens in (954290, 900000):
+            current_runtime = resolved_runtime()
+            current_runtime["max_total_tokens"] = current_tokens
+            current = build_runtime_identity(current_runtime, ENVIRONMENT)
+            with self.subTest(current_tokens=current_tokens), self.assertRaisesRegex(
+                ValueError, "profile requires at least 954291"
+            ):
+                self.write_and_load(document, current_identity=current)
 
     def test_document_is_json_ready_independent_deep_copy(self):
         loaded = self.validate()

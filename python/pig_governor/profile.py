@@ -13,7 +13,7 @@ import stat
 from types import MappingProxyType
 from typing import Mapping
 
-from .identity import compare_identity, validate_identity
+from .identity import compare_profile_compatibility, validate_identity
 
 
 PROFILE_SCHEMA = "phala.pig.response-surface-profile.v1"
@@ -227,7 +227,7 @@ def validate_profile(
         raise ValueError("Profile predictor does not match the runtime algorithm")
     identity = validate_identity(profile["runtime_identity"])
     current = validate_identity(current_identity)
-    compare_identity(identity, current)
+    compare_profile_compatibility(identity, current)
     if identity["runtime"]["max_running_requests"] != runtime_max:
         raise ValueError("Runtime identity max_running_requests does not match the profile")
     raw_cells = profile["cells"]
@@ -318,6 +318,9 @@ def validate_profile(
         "ttl_seconds": (valid_until - wall).total_seconds(),
         "sha256": source_sha256,
         "runtime_identity_sha256": identity["sha256"],
+        "current_runtime_identity_sha256": current["sha256"],
+        "profile_max_total_tokens": identity["runtime"]["max_total_tokens"],
+        "current_max_total_tokens": current["runtime"]["max_total_tokens"],
         "max_running_requests": profile_max,
         "predictor": MappingProxyType({
             **PREDICTOR,

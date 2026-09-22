@@ -8,7 +8,9 @@ from pig_governor.identity import (
     build_runtime_identity,
     canonical_json,
     compare_identity,
+    compare_profile_compatibility,
     first_identity_difference,
+    first_profile_compatibility_difference,
     validate_identity,
 )
 
@@ -141,6 +143,57 @@ class RuntimeIdentityTests(unittest.TestCase):
         actual = build_runtime_identity(changed_runtime, ENVIRONMENT)
         with self.assertRaisesRegex(ValueError, "runtime.dtype"):
             compare_identity(expected, actual)
+
+    def test_profile_compatibility_accepts_equal_or_greater_probed_capacity(self):
+        profile_runtime = resolved_runtime()
+        profile_runtime["max_total_tokens"] = 954291
+        profile = build_runtime_identity(profile_runtime, ENVIRONMENT)
+        larger_runtime = resolved_runtime()
+        larger_runtime["max_total_tokens"] = 954454
+        larger = build_runtime_identity(larger_runtime, ENVIRONMENT)
+
+        self.assertNotEqual(profile["sha256"], larger["sha256"])
+        self.assertIsNone(first_profile_compatibility_difference(profile, profile))
+        self.assertIsNone(first_profile_compatibility_difference(profile, larger))
+        compare_profile_compatibility(profile, profile)
+        compare_profile_compatibility(profile, larger)
+        with self.assertRaisesRegex(ValueError, "runtime.max_total_tokens"):
+            compare_identity(profile, larger)
+
+    def test_profile_compatibility_rejects_any_capacity_decrease(self):
+        profile_runtime = resolved_runtime()
+        profile_runtime["max_total_tokens"] = 954291
+        profile = build_runtime_identity(profile_runtime, ENVIRONMENT)
+        for current_tokens in (954290, 900000):
+            current_runtime = resolved_runtime()
+            current_runtime["max_total_tokens"] = current_tokens
+            current = build_runtime_identity(current_runtime, ENVIRONMENT)
+            with self.subTest(current_tokens=current_tokens):
+                difference = first_profile_compatibility_difference(profile, current)
+                self.assertEqual(difference.field, "runtime.max_total_tokens")
+                with self.assertRaisesRegex(
+                    ValueError, "profile requires at least 954291"
+                ):
+                    compare_profile_compatibility(profile, current)
+
+    def test_profile_compatibility_keeps_static_identity_strict(self):
+        profile = build_runtime_identity(resolved_runtime(), ENVIRONMENT)
+
+        changed_runtime = resolved_runtime()
+        changed_runtime["max_total_tokens"] += 163
+        changed_runtime["dtype"] = "float16"
+        with self.assertRaisesRegex(ValueError, "runtime.dtype"):
+            compare_profile_compatibility(
+                profile, build_runtime_identity(changed_runtime, ENVIRONMENT)
+            )
+
+        changed_environment = dict(ENVIRONMENT)
+        changed_environment["PIG_ENGINE_COMMIT"] = "4" * 40
+        with self.assertRaisesRegex(ValueError, "environment.PIG_ENGINE_COMMIT"):
+            compare_profile_compatibility(
+                profile,
+                build_runtime_identity(resolved_runtime(), changed_environment),
+            )
 
     def test_unrelated_runtime_and_identity_fields_are_rejected(self):
         runtime = resolved_runtime()

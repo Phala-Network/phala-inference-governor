@@ -32,8 +32,10 @@ The following previously attempted models are rejected:
 - `current aggregate TPS / (N + 1)`: it assumes aggregate throughput remains
   constant at an unobserved state and that a waiting candidate immediately
   decodes. Section 5.4 of the v0.12.5 plan explicitly rejects it.
-- a fixed `running_limit`, inflight limit, waiting limit or TAIL semaphore:
-  each substitutes a count for the requested dynamic TPS forecast.
+- a fixed `running_limit`, inflight limit, waiting limit or TAIL semaphore as the
+  sole controller: each substitutes a count for the requested dynamic TPS
+  forecast. Governor now layers explicit running/waiting safety bounds after the
+  TPS decision; those bounds do not replace the forecast.
 - one admission credit per poll or a 500 ms pacer: it limits growth rate, not
   final Decode concurrency, and can still accumulate delayed waiting.
 - a decision made after Router/SGLang metrics observe the new request: the
@@ -49,12 +51,14 @@ The following previously attempted models are rejected:
   /admin/v1/predictive-policy` with epoch/revision CAS.
 - The reference is an average per-user Decode TPS target with normal variation,
   not a per-request or per-token deadline.
-- There is no Governor running, inflight or waiting cap. Waiting count alone
-  never rejects a request. Queue time and TTFT are not admission conditions.
-- A request is rejected only when its conservative post-admit TPS forecast is
-  below the reference or the evidence needed for that forecast is explicitly
-  unqualified. The latter is observable as `unknown`, never disguised as a
-  count limit.
+- `PIG_MAX_RUNNING` and `PIG_MAX_WAITING` are hard admission bounds and are
+  hot-updatable through the same authenticated CAS API. Production defaults are
+  43 and 3. Native queue telemetry, queue age and TTFT are not admission
+  conditions.
+- TPS is evaluated first. A request is rejected when its conservative post-admit
+  TPS forecast is below the reference, the evidence needed for that forecast is
+  explicitly unqualified, or a TPS-fit admission would exceed the configured
+  running/waiting bounds. The reasons remain distinct and observable.
 - A rejection is an OpenAI-compatible HTTP 429 before waiting/grammar queue
   insertion, KV allocation, cache prefetch or worker dispatch. TAIL forwards
   the status and body unchanged; Redpill then performs its existing fallback.
@@ -76,16 +80,20 @@ For a candidate, the owner constructs:
 outstanding_after = admitted_nonterminal + 1
 projected_decode_concurrency =
     min(outstanding_after, native_max_running_requests)
+projected_waiting =
+    max(0, outstanding_after - policy_max_running)
 candidate_context_upper =
     exact_tokenized_input + validated_max_new_tokens
 projected_pressure_class =
     conservative class of admitted work plus candidate_context_upper
 ```
 
-`native_max_running_requests` describes the engine's physical runnable set. It
-is not a Governor limit: once `outstanding_after` is above that value, another
-waiting request does not by itself increase projected Decode concurrency. It
-may still change the request/context-pressure class.
+`native_max_running_requests` describes the engine's physical runnable set and
+continues to select the TPS response-surface cell. `policy_max_running` is the
+separate mutable hard policy bound. Once `outstanding_after` is above the native
+value, another waiting request does not by itself increase projected Decode
+concurrency, though it can increase `projected_waiting` or change the pressure
+class.
 
 The check, decision, reservation commit and native enqueue are one Scheduler
 transaction. A rejected request commits no reservation. Batch inputs are
@@ -144,12 +152,13 @@ reference == 0                                      -> fit (offline observation)
 qualified projected-cell lower bound >= reference  -> fit
 qualified projected-cell lower bound <  reference  -> tps_risk / 429
 no qualified projected-cell evidence               -> unknown / 429
+TPS-fit projected_waiting > max_waiting             -> waiting_limit / 429
 ```
 
-Waiting has no independent branch in this decision. A large waiting population
-is allowed when it leaves the projected runnable state in a cell whose
-conservative per-user TPS remains at or above the reference. Conversely,
-`waiting == 0` does not bypass a low target-cell forecast.
+The TPS branch does not use native waiting telemetry as a performance proxy.
+After a fit TPS result, the reservation ledger enforces the configured hard
+waiting bound. Conversely, `waiting == 0` does not bypass a low target-cell
+forecast, and a TPS-risk rejection is never relabeled as a count rejection.
 
 ## Cold, stale and identity behavior
 
@@ -157,8 +166,11 @@ Production does not invent an online N+1 curve. The initial conservative
 service surface is generated on the authorized C2 while Redpill is disabled,
 using the exact composed image, model/revision, GPU class, topology, KV dtype,
 speculative configuration, native runnable range and Governor predictor
-version. The resulting profile is reviewed, hash-pinned and loaded as data;
-production startup sends no completion request.
+version. Static identity fields match exactly. The probed `max_total_tokens`
+value is a minimum capacity: a current runtime may reuse the profile only when
+its actual capacity is at least the sampled value. The resulting profile is
+reviewed, hash-pinned and loaded as data; production startup sends no completion
+request.
 
 `tps_reference=0` is the explicit offline observation mode used to populate
 otherwise unseen cells. The final C2 state is hot-updated to 50 through the
@@ -191,8 +203,9 @@ and reservation state unchanged.
 1. A test must first fail the current `aggregate/(N+1)` implementation: equal
    current aggregate TPS with different target-cell histories yields different
    decisions.
-2. High waiting with a qualified safe projected cell is fit; waiting zero with
-   a qualified unsafe target cell is 429.
+2. Waiting up to the configured bound with a qualified safe projected cell is
+   fit; the next TPS-fit admission is `waiting_limit / 429`. Waiting zero with a
+   qualified unsafe target cell is still `tps_risk / 429`.
 3. Missing/stale/mismatched target evidence is observable `unknown`; reference
    zero can collect evidence; CAS 0->50 preserves it.
 4. Same-loop batch admissions see committed reservations. Rejection changes no
@@ -213,9 +226,9 @@ and reservation state unchanged.
 TAIL remains a thin transport/authentication/attestation layer. Legacy Guard
 and the discarded static TAIL semaphore are not part of this design.
 
-## Implementation status (2026-09-21)
+## Implementation status (2026-09-22)
 
-The local source candidate is package 0.2.0 with C ABI v4 and a bounded
+The local source candidate is package 0.2.2 with C ABI v4 and a bounded
 response surface:
 
 - `pig_governor_observe_surface(now, delta, sequence_seconds, concurrency, pressure_class)`
@@ -252,8 +265,9 @@ response surface:
 - `reference=0` is the offline observation mode. A CAS update to 50 preserves the
   surface.
 - Production startup with a positive reference requires a hash-pinned,
-  unexpired profile whose exact runtime identity matches all resolved engine,
-  model, hardware and scheduler fields. Reference zero may start without it.
+  unexpired profile whose engine, model, hardware and static scheduler identity
+  fields match exactly, and whose sampled `max_total_tokens` does not exceed the
+  current runtime capacity. Reference zero may start without it.
 - `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` exports a strict,
   non-cacheable envelope containing coverage and a loadable profile document.
 - A runtime/model identity change clears live/prior evidence and rotates the CAS

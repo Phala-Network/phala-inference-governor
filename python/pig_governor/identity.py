@@ -205,23 +205,63 @@ def first_identity_difference(
     profile = validate_identity(profile_identity)
     current = validate_identity(current_identity)
 
-    def first(profile_value: object, current_value: object, path: str):
-        if type(profile_value) is dict and type(current_value) is dict:
-            for key in sorted(set(profile_value) | set(current_value)):
-                child = f"{path}.{key}" if path else key
-                if key not in profile_value:
-                    return IdentityDifference(child, None, current_value[key])
-                if key not in current_value:
-                    return IdentityDifference(child, profile_value[key], None)
-                difference = first(profile_value[key], current_value[key], child)
-                if difference is not None:
-                    return difference
-            return None
-        if profile_value != current_value:
-            return IdentityDifference(path, profile_value, current_value)
-        return None
+    return _first_difference(profile, current, "")
 
-    return first(profile, current, "")
+
+def _first_difference(
+    profile_value: object, current_value: object, path: str
+) -> IdentityDifference | None:
+    """Return the first canonical difference between validated JSON values."""
+    if type(profile_value) is dict and type(current_value) is dict:
+        for key in sorted(set(profile_value) | set(current_value)):
+            child = f"{path}.{key}" if path else key
+            if key not in profile_value:
+                return IdentityDifference(child, None, current_value[key])
+            if key not in current_value:
+                return IdentityDifference(child, profile_value[key], None)
+            difference = _first_difference(
+                profile_value[key], current_value[key], child
+            )
+            if difference is not None:
+                return difference
+        return None
+    if profile_value != current_value:
+        return IdentityDifference(path, profile_value, current_value)
+    return None
+
+
+def first_profile_compatibility_difference(
+    profile_identity: object, current_identity: object
+) -> IdentityDifference | None:
+    """Return the first field that makes a profile unsafe for this runtime.
+
+    ``runtime.max_total_tokens`` is a probed KV capacity rather than a static
+    setting.  A profile sampled with no more capacity than the current runtime
+    is conservative and remains valid.  Every other identity field stays exact.
+    Each identity digest is still validated against its own canonical contents.
+    """
+    profile = validate_identity(profile_identity)
+    current = validate_identity(current_identity)
+    profile_runtime = profile["runtime"]
+    current_runtime = current["runtime"]
+
+    compatible_current_runtime = dict(current_runtime)
+    if current_runtime["max_total_tokens"] >= profile_runtime["max_total_tokens"]:
+        compatible_current_runtime["max_total_tokens"] = profile_runtime[
+            "max_total_tokens"
+        ]
+
+    profile_contents = {
+        "schema": profile["schema"],
+        "environment": profile["environment"],
+        "runtime": profile_runtime,
+    }
+    current_contents = {
+        "schema": current["schema"],
+        "environment": current["environment"],
+        "runtime": compatible_current_runtime,
+    }
+    return _first_difference(profile_contents, current_contents, "")
 
 
 def compare_identity(expected: object, actual: object) -> None:
@@ -232,3 +272,20 @@ def compare_identity(expected: object, actual: object) -> None:
             f"Runtime identity mismatch at {difference.field}: "
             f"expected {difference.profile!r}, got {difference.current!r}"
         )
+
+
+def compare_profile_compatibility(profile: object, current: object) -> None:
+    """Raise when a frozen profile is unsafe for the current runtime."""
+    difference = first_profile_compatibility_difference(profile, current)
+    if difference is None:
+        return
+    if difference.field == "runtime.max_total_tokens":
+        raise ValueError(
+            "Runtime profile capacity mismatch at runtime.max_total_tokens: "
+            f"profile requires at least {difference.profile!r}, "
+            f"got {difference.current!r}"
+        )
+    raise ValueError(
+        f"Runtime identity mismatch at {difference.field}: "
+        f"expected {difference.profile!r}, got {difference.current!r}"
+    )

@@ -21,7 +21,7 @@ preparing recovery.
 
 ## ABI v4 incident-repair candidate
 
-The current source candidate is Governor `0.2.0`, C ABI v4. The `govdev2`
+The current source candidate is Governor `0.2.2`, C ABI v4. The `govdev2`
 deployment described below is retained as historical evidence and does not
 contain the frozen-profile bootstrap contract.
 
@@ -29,9 +29,10 @@ Alongside `PIG_GOVERNOR_ENABLE`, the absolute library path and
 `PIG_TPS_REFERENCE`, configure exact 40-hex engine/Governor commits, a
 `sha256:<digest>` model artifact identity and a stable lowercase hardware slug.
 Positive-reference startup also requires `PIG_TPS_PROFILE_PATH` and
-`PIG_TPS_PROFILE_SHA256`; the file must match the complete resolved runtime
-identity and provide full exact/jointly-heavier coverage. Reference zero may
-start without a profile for the authorized offline sampling run.
+`PIG_TPS_PROFILE_SHA256`; static identity fields must match exactly, the current
+probed `max_total_tokens` must be at least the profile value, and the file must
+provide full exact/jointly-heavier coverage. Reference zero may start without a
+profile for the authorized offline sampling run.
 
 The admin surface adds authenticated
 `GET /admin/v1/predictive-profile?expected_epoch=<epoch>`. Save the nested
