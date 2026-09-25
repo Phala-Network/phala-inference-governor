@@ -408,13 +408,25 @@ impl State {
         Ok(())
     }
 
-    fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
+    fn observe_in_place(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
+        if active_after > u64::from(self.max_running_requests) {
+            return Err(INVALID);
+        }
         let active_before = self.active;
         self.advance(now)?;
         self.record_tokens(now, delta)?;
         self.update_active_run(active_before, active_after, now, delta)?;
         self.active = active_after;
         self.observed = true;
+        Ok(())
+    }
+
+    fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
+        // Keep the public observer transactional: a rejected update must not
+        // advance the clock or partially append evidence.
+        let mut next = self.clone();
+        next.observe_in_place(now, delta, active_after)?;
+        *self = next;
         Ok(())
     }
 
@@ -456,6 +468,7 @@ impl State {
         if concurrency == 0
             || concurrency > self.max_running_requests
             || pressure_class >= PRESSURE_CLASSES
+            || active_after > u64::from(self.max_running_requests)
             || !nonnegative(sequence_seconds)
             || (delta > 0 && sequence_seconds == 0.0)
         {
@@ -490,19 +503,27 @@ impl State {
         pressure_class: u32,
         active_after: u64,
     ) -> Result<()> {
-        if self.active == 0 || u64::from(concurrency) != self.active
+        if self.active == 0
+            || u64::from(concurrency) != self.active
             || active_after > u64::from(self.max_running_requests)
-            || pressure_class >= PRESSURE_CLASSES || !nonnegative(sequence_seconds)
+            || pressure_class >= PRESSURE_CLASSES
+            || !nonnegative(sequence_seconds)
             || (sequence_seconds == 0.0 && delta != 0)
         {
             return Err(INVALID);
         }
         let mut next = self.clone();
         if sequence_seconds > 0.0 {
-            next.observe_batch(now, delta, sequence_seconds, concurrency,
-                               pressure_class, active_after)?;
+            next.observe_batch(
+                now,
+                delta,
+                sequence_seconds,
+                concurrency,
+                pressure_class,
+                active_after,
+            )?;
         } else {
-            next.observe(now, 0, active_after)?;
+            next.observe_in_place(now, 0, active_after)?;
         }
         next.active_run_buckets = [EMPTY; BUCKETS];
         next.active_run_has_tokens = false;
@@ -1167,6 +1188,20 @@ mod tests {
         let mut overflow = s.clone();
         assert_eq!(overflow.observe(1.5, u64::MAX, 1), Err(INVALID));
         assert_eq!(s.snapshot(1.0).unwrap().active_sequences, 1);
+    }
+
+    #[test]
+    fn observation_rejects_active_count_above_native_capacity_atomically() {
+        let mut s = State::new(50.0, 2).unwrap();
+        s.observe(1.0, 3, 1).unwrap();
+        let before = s.snapshot(1.0).unwrap();
+
+        assert_eq!(s.observe(2.0, 7, 3), Err(INVALID));
+        assert_eq!(s.last_time, Some(1.0));
+        assert_eq!(s.snapshot(1.0).unwrap(), before);
+        assert_eq!(s.observe_batch(2.0, 7, 1.0, 1, 0, 3), Err(INVALID));
+        assert_eq!(s.last_time, Some(1.0));
+        assert_eq!(s.snapshot(1.0).unwrap(), before);
     }
 
     #[test]

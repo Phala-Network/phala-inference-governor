@@ -35,3 +35,20 @@ response surface, admission thresholds, profile format, or SGLang source
 combination. The final unified image and compatible remote integration CI still
 need to consume this commit. GPU805 serving containers were not restarted or
 replaced.
+
+## Follow-up Rust boundary review, 2026-09-25
+
+The C ABI observer accepted `active_after` above the configured native running
+capacity in `observe` and `observe_batch`. The direct observer also advanced its
+clock before an overflow or other late validation error could be returned. The
+observer now validates the capacity and commits through a cloned state, so a
+rejected call leaves the clock and evidence unchanged. The batch path applies
+the same capacity guard; replacement's zero-exposure path uses the in-place
+helper to avoid a redundant clone.
+
+- `cargo check --tests`: passed on Windows.
+- `cargo test`: could not link locally because the MSVC `link.exe` tool is not
+  installed; this is an environment limitation, not a test failure.
+- Python scheduler regression suite: `40 passed` with `PYTHONPATH=python`.
+- The new Rust regression covers both observer entry points and atomic rollback;
+  it still requires the fixed Linux/GPU805 image for executable Rust testing.
