@@ -102,6 +102,7 @@ class Governor:
         self._profile_cell_count = 0
         self._profile_expires_at = None
         self.epoch = uuid.uuid4().hex
+        self._functions = {}
         try:
             abi_version = getattr(self._lib, "pig_governor_abi_version")
         except AttributeError:
@@ -164,12 +165,13 @@ class Governor:
                     "Governor ABI v4 library is missing symbol: " + symbol
                 ) from None
             function.argtypes, function.restype = arguments, result
+            self._functions[name] = function
         reference = _finite(reference)
         self._reference = reference
         if (profile_cells is None) != (profile_ttl_seconds is None):
             raise ValueError("profile_cells and profile_ttl_seconds are required together")
         if profile_cells is None:
-            self._check(self._lib.pig_governor_new(
+            self._check(self._functions["new"](
                 reference, self._max_running_requests, C.byref(self._handle),
             ))
         else:
@@ -187,7 +189,7 @@ class Governor:
             ttl = _finite(profile_ttl_seconds)
             if ttl == 0:
                 raise ValueError("profile_ttl_seconds must be positive")
-            self._check(self._lib.pig_governor_new_with_profile(
+            self._check(self._functions["new_with_profile"](
                 reference, self._max_running_requests, profile_now, ttl,
                 native_cells, len(profile_cells), C.byref(self._handle),
             ))
@@ -224,13 +226,13 @@ class Governor:
         with self._lock:
             if not self._handle:
                 raise RuntimeError("Controller closed")
-            self._check(getattr(self._lib, "pig_governor_" + name)(self._handle, *args))
+            self._check(self._functions[name](self._handle, *args))
 
     def close(self):
         with self._lock:
             if self._handle:
                 handle, self._handle = self._handle, C.c_void_p()
-                self._check(self._lib.pig_governor_free(handle))
+                self._check(self._functions["free"](handle))
 
     def observe(self, now, committed_decode_delta, active_after):
         self._call("observe", _finite(now), _integer(committed_decode_delta), _integer(active_after))
@@ -360,7 +362,7 @@ class Governor:
         with self._lock:
             if not self._handle:
                 raise RuntimeError("Controller closed")
-            self._check(self._lib.pig_governor_admit(
+            self._check(self._functions["admit"](
                 self._handle,
                 _finite(now),
                 _concurrency(projected_concurrency),

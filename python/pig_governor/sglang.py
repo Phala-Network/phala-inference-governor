@@ -318,10 +318,16 @@ class SglangGovernor(SchedulerGovernor):
             self.prefill_completed(batch.launch_ts, now)
 
     def before_prefill(self, running, waiting, chunked, now):
-        ready = [req.time_stats.wait_queue_entry_time for req in waiting]
+        oldest_ready = None
+        for req in waiting:
+            ready_at = req.time_stats.wait_queue_entry_time
+            if oldest_ready is None or ready_at < oldest_ready:
+                oldest_ready = ready_at
         if chunked is not None:
-            ready.append(chunked.time_stats.wait_queue_entry_time)
-        age = max(0, now - min(ready)) if ready else 0
+            ready_at = chunked.time_stats.wait_queue_entry_time
+            if oldest_ready is None or ready_at < oldest_ready:
+                oldest_ready = ready_at
+        age = max(0, now - oldest_ready) if oldest_ready is not None else 0
         runnable = bool(running and not running.is_empty() and not running.is_prefill_only)
         return self.prefer_decode(now, runnable_decode=runnable,
                                   pending_prefill=bool(waiting or chunked is not None),

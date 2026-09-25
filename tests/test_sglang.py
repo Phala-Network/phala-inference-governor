@@ -273,6 +273,23 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.core.snapshot(3)['decode_sequence_seconds'], 2)
         self.assertEqual(self.adapter.outstanding, 0)
 
+    def test_before_prefill_uses_oldest_waiting_timestamp(self):
+        waiting = [
+            SimpleNamespace(time_stats=SimpleNamespace(wait_queue_entry_time=4)),
+            SimpleNamespace(time_stats=SimpleNamespace(wait_queue_entry_time=7)),
+        ]
+        chunked = SimpleNamespace(
+            time_stats=SimpleNamespace(wait_queue_entry_time=2)
+        )
+        with patch.object(self.adapter, "prefer_decode", return_value=True) as prefer:
+            self.assertTrue(self.adapter.before_prefill(None, waiting, chunked, 10))
+        prefer.assert_called_once_with(
+            10,
+            runnable_decode=False,
+            pending_prefill=True,
+            oldest_ready_age=8,
+        )
+
     def test_native_pre_admission_abort_skips_governor_progress(self):
         req = SimpleNamespace(
             finished=lambda: False,
