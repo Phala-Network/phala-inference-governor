@@ -1,6 +1,7 @@
 """Native lifecycle adapter contracts; no SGLang import or GPU dependency."""
+import threading
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from types import SimpleNamespace
 from pig_governor.scheduler import MAX_WAITING_LIMIT, Progress, SchedulerGovernor
 
@@ -69,6 +70,19 @@ class Core:
         return False
 
 
+class BlockingObserveCore(Core):
+    def __init__(self):
+        super().__init__()
+        self.observe_entered = threading.Event()
+        self.allow_observe = threading.Event()
+
+    def observe(self, now, delta, active_after):
+        self.observe_entered.set()
+        if not self.allow_observe.wait(timeout=2):
+            raise AssertionError("test observe gate timed out")
+        super().observe(now, delta, active_after)
+
+
 def request(rid, input_tokens=16, max_new_tokens=16):
     return SimpleNamespace(
         rid=rid,
@@ -78,6 +92,21 @@ def request(rid, input_tokens=16, max_new_tokens=16):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_batch_commit_serializes_policy_snapshot(self):
+        core = BlockingObserveCore()
+        adapter = SchedulerGovernor(core)
+        progress = Progress()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            commit = pool.submit(adapter.committed, progress, 1, 1)
+            self.assertTrue(core.observe_entered.wait(timeout=1))
+            snapshot = pool.submit(adapter.policy_snapshot, 1)
+            with self.assertRaises(TimeoutError):
+                snapshot.result(timeout=0.05)
+            core.allow_observe.set()
+            commit.result(timeout=1)
+            self.assertEqual(snapshot.result(timeout=1)["revision"], 1)
+        self.assertEqual(adapter.active, 1)
+
     def test_max_running_requests_is_bounded_to_32_bits(self):
         with self.assertRaises(ValueError):
             SchedulerGovernor(Core(), max_running_requests=2**32)

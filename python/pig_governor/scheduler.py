@@ -230,6 +230,11 @@ class SchedulerGovernor:
 
     def commit_batch(self, updates, now):
         """Commit one native forward batch before publishing state changes."""
+        with self._policy_lock:
+            self._commit_batch_locked(updates, now)
+
+    def _commit_batch_locked(self, updates, now):
+        """Apply a batch while the Scheduler policy lock is held."""
         if not isinstance(updates, (list, tuple)):
             raise ValueError("Expected a batch update sequence")
         active_before = self.active
