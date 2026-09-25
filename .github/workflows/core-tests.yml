@@ -71,36 +71,40 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Checkout pinned clean SGLang source
+      - name: Checkout compatible complete Phala SGLang source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang
-          ref: 63a21f09fcc26892a6d30c76945b783aa0eb3149
-          path: sglang-clean-base
+          ref: f1a2a743438a9f908f25e93944212886997b6629
+          path: sglang-complete
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: governor-library
           path: .artifacts
-      - name: Apply Governor hooks to the pinned clean SGLang base
+      - name: Verify compatible engine and embedded Governor hooks
         shell: bash
         run: |
-          base_dir="$GITHUB_WORKSPACE/sglang-clean-base"
-          base=63a21f09fcc26892a6d30c76945b783aa0eb3149
-          actual=$(git -C "$base_dir" rev-parse HEAD)
-          test "$actual" = "$base"
-          git -C "$base_dir" apply --check "$GITHUB_WORKSPACE/patches/sglang/v0.5.20/0001-governor-hooks.patch"
-          git -C "$base_dir" apply "$GITHUB_WORKSPACE/patches/sglang/v0.5.20/0001-governor-hooks.patch"
+          engine_dir="$GITHUB_WORKSPACE/sglang-complete"
+          engine=f1a2a743438a9f908f25e93944212886997b6629
+          engine_tree=3b03fcbf436e92124d11d65c3befea8c2d6e7f09
+          serving_patches=7c16d5b4b0a43e5632a70a243717879f620f1dd9
+          test "$(git -C "$engine_dir" rev-parse HEAD)" = "$engine"
+          test "$(git -C "$engine_dir" rev-parse HEAD^{tree})" = "$engine_tree"
+          printf 'engine_commit=%s\nengine_tree=%s\nserving_patches_commit=%s\n' \
+            "$engine" "$engine_tree" "$serving_patches" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -q 'init_governor' "$engine_dir/python/sglang/srt/managers/scheduler.py"
+          grep -q '/admin/v1/predictive-policy' "$engine_dir/python/sglang/srt/entrypoints/http_server.py"
           python -m compileall -q \
-            "$base_dir/python/sglang/srt/entrypoints/http_server.py" \
-            "$base_dir/python/sglang/srt/managers/io_struct.py" \
-            "$base_dir/python/sglang/srt/managers/scheduler.py"
-      - name: Run Python integration tests against the patched SGLang base
+            "$engine_dir/python/sglang/srt/entrypoints/http_server.py" \
+            "$engine_dir/python/sglang/srt/managers/io_struct.py" \
+            "$engine_dir/python/sglang/srt/managers/scheduler.py"
+      - name: Run Python integration tests against the compatible SGLang source
         shell: bash
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          export PYTHONPATH="$GITHUB_WORKSPACE/sglang-clean-base/python:$GITHUB_WORKSPACE/python"
+          export PYTHONPATH="$GITHUB_WORKSPACE/sglang-complete/python:$GITHUB_WORKSPACE/python"
           export PIG_GOVERNOR_LIBRARY="$GITHUB_WORKSPACE/.artifacts/libpig_governor_core.so"
           python - <<'PY'
           import os
