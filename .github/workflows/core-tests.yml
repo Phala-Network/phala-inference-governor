@@ -93,7 +93,7 @@ jobs:
           test "$(git -C "$engine_dir" rev-parse HEAD^{tree})" = "$engine_tree"
           printf 'engine_commit=%s\nengine_tree=%s\nserving_patches_commit=%s\n' \
             "$engine" "$engine_tree" "$serving_patches" | tee -a "$GITHUB_STEP_SUMMARY"
-          grep -q 'init_governor' "$engine_dir/python/sglang/srt/managers/scheduler.py"
+          grep -q 'from pig_governor.sglang import create' "$engine_dir/python/sglang/srt/managers/scheduler.py"
           grep -q '/admin/v1/predictive-policy' "$engine_dir/python/sglang/srt/entrypoints/http_server.py"
           python -m compileall -q \
             "$engine_dir/python/sglang/srt/entrypoints/http_server.py" \
