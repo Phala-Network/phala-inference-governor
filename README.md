@@ -40,7 +40,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.2` uses C ABI v4. Production runtime configuration binds a
+Component `0.2.4` uses C ABI v4. Production runtime configuration binds a
 frozen response-surface profile to the exact composed engine, Governor source,
 model artifact, hardware class and resolved SGLang settings:
 
@@ -72,6 +72,10 @@ admin authentication. Do not put credentials in argv. Missing/invalid TOKEN or
 any simultaneous explicit API/admin key fails startup. Diagnostic serialization
 redacts keys without altering runtime configuration or internal IPC.
 
+Use `--skip-server-warmup` with positive-reference Governor startup. SGLang's
+internal synthetic completion can be rejected by admission and otherwise abort
+startup; explicit offline sampling and later functional probes remain separate.
+
 ## External policy API
 
 Authenticated `GET/PATCH /admin/v1/predictive-policy` reads and atomically updates
@@ -80,6 +84,9 @@ requires `expected_epoch` and `expected_revision` for CAS. A successful hot upda
 neither restarts the model nor resets actual history. `tps_reference=0` is the
 explicit C2 offline sampling mode; a CAS update from 0 to the production reference
 preserves the learned response surface.
+`max_waiting=0` pauses new native admission while existing work drains.
+Restoring a positive waiting limit through CAS resumes admission without a
+restart.
 
 Authenticated `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` exports
 one epoch-guarded, non-cacheable envelope containing the exact runtime identity,
@@ -99,9 +106,10 @@ Admission is TPS-first and occurs before SGLang's grammar or ordinary waiting
 queue. It forecasts the candidate's projected `(Decode concurrency, context
 pressure)` cell from measured per-user Decode evidence, and returns HTTP 429 when
 that cell is unqualified or falls below the reference. A TPS-fit request is then
-rejected when admitting it would exceed `max_running + max_waiting`; production
-defaults are 43 running and 3 waiting. Waiting below that bound is not by itself a
-rejection condition.
+rejected when it would exceed either the logical `max_running + max_waiting`
+capacity or the actual native waiting bound. Production defaults are 43 running
+and 3 waiting. The fourth queued arrival is rejected even when logical running
+slots remain. Queue age and TTFT are not independent rejection conditions.
 The Rust core has no third-party dependencies; its versioned C ABI is loaded by
 ctypes from a prebuilt library, without runtime Cargo builds.
 

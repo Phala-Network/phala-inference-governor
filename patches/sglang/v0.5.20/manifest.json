@@ -16,7 +16,7 @@
   },
   "component": {
     "repository": "https://github.com/Phala-Network/phala-inference-governor",
-    "version": "0.2.2",
+    "version": "0.2.4",
     "abi_version": 4
   },
   "patches": [
@@ -27,12 +27,15 @@
         "python/sglang/srt/managers/io_struct.py",
         "python/sglang/srt/managers/scheduler.py"
       ],
-      "sha256": "52087d47d575c95351e17e5335ac6ca5a3d5b6bb63548438502521ca524117ea",
+      "sha256": "74d967e31940f3ef5b2aa010999cd36329756970c8d3c073db8ed7b17723f1d2",
       "source": {
         "repository": "https://github.com/Phala-Network/sglang",
         "parent": "5871a82cb0ef1221126b8c9712881e497041bd38",
-        "commit": "354d47922eafa95ebc2d7bd63b7627d780a01c26",
-        "tree": "2733a3bae11d56e4bf3f694fbb49f8e9e156086d"
+        "base_hook_commit": "354d47922eafa95ebc2d7bd63b7627d780a01c26",
+        "base_hook_tree": "2733a3bae11d56e4bf3f694fbb49f8e9e156086d",
+        "commit": "e02dfa1256c5d7d6e8b731d439229d5aca72cbe5",
+        "tree": "ae0e7307e3dcf2314b7eb51e26a17207073e0f0a",
+        "status": "assembled_cpu_overlay_pending"
       }
     }
   ],
@@ -48,16 +51,13 @@
   },
   "validation": {
     "date": "2026-09-22",
-    "record": "../../../docs/validation/governor-v4-capacity-compat-linux-r1.json",
-    "rust_unit_tests": 28,
-    "python_unittest_tests": 138,
-    "native_sglang_common_tests": 10,
+    "status": "source_candidate_cpu_overlay_pending",
     "component_contract_abi": 4,
+    "scheduler_hook_roundtrip": true,
     "clean_replay": true,
-    "clean_replay_date": "2026-09-21",
-    "clean_replay_record": "../../../docs/validation/governor-v4-linux-r2.json",
     "gpu_acceptance": false,
     "image_acceptance": false,
-    "production_acceptance": false
+    "production_acceptance": false,
+    "historical_validation_record": "../../../docs/validation/governor-v4-capacity-compat-linux-r1.json"
   }
 }

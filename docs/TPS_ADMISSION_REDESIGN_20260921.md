@@ -53,8 +53,8 @@ The following previously attempted models are rejected:
   not a per-request or per-token deadline.
 - `PIG_MAX_RUNNING` and `PIG_MAX_WAITING` are hard admission bounds and are
   hot-updatable through the same authenticated CAS API. Production defaults are
-  43 and 3. Native queue telemetry, queue age and TTFT are not admission
-  conditions.
+  43 and 3. New admission must also respect the actual ordinary/grammar/pending
+  chunk backlog. Queue age and TTFT are not admission conditions.
 - TPS is evaluated first. A request is rejected when its conservative post-admit
   TPS forecast is below the reference, the evidence needed for that forecast is
   explicitly unqualified, or a TPS-fit admission would exceed the configured
@@ -80,8 +80,12 @@ For a candidate, the owner constructs:
 outstanding_after = admitted_nonterminal + 1
 projected_decode_concurrency =
     min(outstanding_after, native_max_running_requests)
-projected_waiting =
+logical_projected_waiting =
     max(0, outstanding_after - policy_max_running)
+native_waiting_before =
+    ordinary_waiting + grammar_waiting + pending_chunk
+projected_waiting =
+    max(logical_projected_waiting, native_waiting_before + 1)
 candidate_context_upper =
     exact_tokenized_input + validated_max_new_tokens
 projected_pressure_class =
@@ -93,14 +97,20 @@ continues to select the TPS response-surface cell. `policy_max_running` is the
 separate mutable hard policy bound. Once `outstanding_after` is above the native
 value, another waiting request does not by itself increase projected Decode
 concurrency, though it can increase `projected_waiting` or change the pressure
-class.
+class. Native waiting is supplied synchronously by the Scheduler before queue
+insertion; it is not a delayed polling metric. Spare logical running slots do
+not exempt a new request from the native waiting bound. Three queued arrivals
+followed by a fourth arrival in the same scheduler cycle therefore reject the
+fourth request before insertion.
 
 The check, decision, reservation commit and native enqueue are one Scheduler
 transaction. A rejected request commits no reservation. Batch inputs are
 decided sequentially in that same owner, so an earlier fit is visible to the
 next candidate. Grammar, multimodal and ordinary requests share the same
 ledger. A retracted request already owns a reservation and is never admitted a
-second time.
+second time. Already-admitted work is not aborted by a hot policy reduction;
+new admission remains closed while existing ownership exceeds the new bounds.
+Internal retraction reuses ownership and is not a new client admission.
 
 Terminal completion, validation rollback, queue-limit eviction, cancellation,
 disconnect, timeout, upstream/internal failure, grammar abort and shutdown all
@@ -111,6 +121,30 @@ state prevents a RID prefix match, retry or retraction from double releasing.
 
 Governor predicts the target state from measurements made at that state. It
 does not transform a current aggregate rate into an unobserved N+1 rate.
+
+An already-active decode run also supplies a negative-only safety bound after
+that run has committed at least one decode token. If its unscaled aggregate
+live TPS is below the reference, Governor rejects otherwise-fit expansion; it
+never uses aggregate TPS to admit an unknown target state. Idle history and a
+new run before its first committed decode token do not activate this bound.
+The admission result uses an internal current-active-run rolling window; the
+public aggregate snapshot intentionally keeps its existing cross-run 60-second
+history and is not the exact arithmetic source for this rejection reason.
+
+A run also ends when every old active request retires in one batch while new
+entrants keep the active count positive. Partial replacement with survivors
+continues the same run. The additive ABI-v4 `pig_governor_observe_replacement`
+entry point atomically records the retiring set's positive-duration evidence
+and clears only the private run rings and token flag. It leaves public history,
+surface cells, imported priors, epoch and revision intact. A zero-duration
+replacement passes zero native tokens; unflushable retired tokens are discarded.
+Entrants exclude their first token and retain any additional Decode tokens in
+Python pending evidence until positive exposure, including when the retiring
+set has a positive final interval. Native rejection leaves both native state and
+Python progress/pending state unchanged. Existing ABI-v4 structs and exported
+signatures are unchanged; this Python package explicitly requires the additive
+symbol and rejects an older library that lacks it.
+
 
 The bounded surface key is:
 
@@ -152,13 +186,20 @@ reference == 0                                      -> fit (offline observation)
 qualified projected-cell lower bound >= reference  -> fit
 qualified projected-cell lower bound <  reference  -> tps_risk / 429
 no qualified projected-cell evidence               -> unknown / 429
+fit projected cell + current active-run TPS < ref   -> aggregate_tps_risk / 429
 TPS-fit projected_waiting > max_waiting             -> waiting_limit / 429
 ```
 
 The TPS branch does not use native waiting telemetry as a performance proxy.
-After a fit TPS result, the reservation ledger enforces the configured hard
-waiting bound. Conversely, `waiting == 0` does not bypass a low target-cell
+After a fit TPS result, the reservation ledger and current native backlog
+jointly enforce the configured hard waiting bound. Conversely, `waiting == 0` does not bypass a low target-cell
 forecast, and a TPS-risk rejection is never relabeled as a count rejection.
+
+`max_waiting=0` pauses new native admission: every new request requires an
+initial queue handoff. It does not silently permit cold arrivals or mean an
+unlimited queue. Existing requests continue; authenticated CAS can restore a
+positive value without restarting the backend. Reference zero disables only
+the TPS forecast gate, not the waiting bound.
 
 ## Cold, stale and identity behavior
 

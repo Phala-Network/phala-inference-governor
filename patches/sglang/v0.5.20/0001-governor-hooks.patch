@@ -45,10 +45,10 @@ index 6f1cf54b9f807ea13247ff19a2e51cd110c57f4f..f9e4a53d01d765f8313f53783b0d5b77
  
  
 diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
-index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e200a83b9 100644
+index 9f5bc8c165009a5128b60c0a7d250ada38188788..344c24fc61bee415e4d2cb90d9f0ade7b180328d 100644
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
-@@ -466,6 +466,7 @@ class Scheduler(
+@@ -466,6 +466,7 @@
  
          # Parse args
          self.server_args = server_args
@@ -56,7 +56,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
          self.nccl_port = port_args.nccl_port
          self.schedule_policy = get_schedule().schedule_policy
          self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
-@@ -647,6 +648,7 @@ class Scheduler(
+@@ -647,6 +648,7 @@
  
          # Init running status
          self.init_running_status()
@@ -64,7 +64,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
  
          # Init chunked prefill
          self.init_chunked_prefill()
-@@ -1291,6 +1293,26 @@ class Scheduler(
+@@ -1291,6 +1293,29 @@
          self.forward_sleep_time = None
          self._engine_paused = False
  
@@ -73,6 +73,9 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
 +            return
 +        if not self.is_generation:
 +            raise ValueError("Governor adapter requires a generation model")
++        if (self.enable_hisparse or self.enable_pdmux
++                or get_exec().dllm.dllm_algorithm is not None):
++            raise ValueError("Governor adapter requires the ordinary prefill/decode scheduler")
 +        from pig_governor.sglang import create
 +
 +        self.governor = create(
@@ -91,7 +94,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
      def init_chunked_prefill(self):
          self.chunked_prefill_size = get_schedule().chunked_prefill_size
          self.prefill_decode_interval = get_schedule().prefill_decode_interval or 0
-@@ -1340,7 +1362,11 @@ class Scheduler(
+@@ -1340,7 +1365,11 @@
          if sizer.profile_and_fit():
              self.dynamic_chunk_sizer = sizer
  
@@ -104,7 +107,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
          if self._prefill_decode_interval_remaining == 0:
              return False
  
-@@ -2798,6 +2824,15 @@ class Scheduler(
+@@ -2798,6 +2827,15 @@
                  )
  
              if is_beam:
@@ -120,7 +123,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
                  error_msg = self.beam_coordinator.validate_and_init(req, recv_req)
                  if error_msg:
                      logger.error(error_msg)
-@@ -3062,9 +3097,22 @@ class Scheduler(
+@@ -3062,9 +3100,22 @@
                  self._add_request_to_queue(req)
                  return
  
@@ -146,7 +149,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
  
      def handle_batch_generate_request(
          self,
-@@ -3190,20 +3238,48 @@ class Scheduler(
+@@ -3190,20 +3241,48 @@
          self._retry_storage_prefetch(req)
          return True
  
@@ -202,7 +205,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
          elif self.disaggregation_mode == DisaggregationMode.PREFILL:
              self._prefetch_kvcache(req)
              self.disagg_prefill_bootstrap_queue.add(
-@@ -3218,6 +3294,62 @@ class Scheduler(
+@@ -3218,6 +3297,62 @@
                  req.time_stats.set_retract_time()
          else:
              raise ValueError(f"Invalid {self.disaggregation_mode=}")
@@ -265,7 +268,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
  
      def _reject_sampling_mask_request(self, req: Req, error_msg: str) -> None:
          """Return a sampling-mask validation error without running the model."""
-@@ -3377,6 +3509,16 @@ class Scheduler(
+@@ -3377,6 +3512,16 @@
              multi_item_delimiter_indices=recv_req.multi_item_delimiter_indices,
          )
          req.tokenizer = self.tokenizer
@@ -282,7 +285,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
          self._maybe_namespace_elastic_radix_cache(req)
  
          if mm_input_error is not None:
-@@ -3654,7 +3796,7 @@ class Scheduler(
+@@ -3654,7 +3799,7 @@
  
          if self.dllm_config is not None:
              new_batch = self.get_new_batch_dllm(running_batch)
@@ -291,7 +294,41 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
              new_batch = None
          else:
              prefill_plan = self.get_new_batch_prefill(running_batch)
-@@ -4632,6 +4774,8 @@ class Scheduler(
+@@ -3730,6 +3875,8 @@
+             # A beam candidate owns beam_width rows once decoding.
+             res = min(res, available // beam_width)
+ 
++        if self.governor is not None:
++            res = max(0, min(res, self.governor.max_running - running_bs))
+         return res
+ 
+     def get_new_batch_prefill(self, running_batch: ScheduleBatch) -> NextBatchPlan:
+@@ -3846,7 +3993,10 @@
+             running_bs if self.is_mixed_chunk else 0,
+             self.priority_scheduling_preemption_threshold,
+             max_prefill_bs=int(self.max_prefill_bs),
+-            max_running_requests=self.max_running_requests,
++            max_running_requests=(
++                self.governor.max_running if self.governor is not None
++                else self.max_running_requests
++            ),
+             prefill_max_requests=get_schedule().prefill_max_requests,
+             prefill_delayer_single_pass=prefill_delayer_single_pass,
+             dllm_config=self.dllm_config,
+@@ -3886,6 +4036,12 @@
+                 continue
+ 
+             running_bs = len(running_batch.reqs)
++            # A lower hot cap drains existing work, including a chunked owner.
++            # Priority preemption must not bypass this new-owner limit.
++            if (self.governor is not None
++                    and running_bs + len(adder.can_run_list) >= self.governor.max_running):
++                running_batch.batch_is_full = True
++                break
+             candidate_beam_width = (
+                 req.beam_group.beam_width if req.beam_group is not None else None
+             )
+@@ -4632,6 +4788,8 @@
          elif batch.forward_mode.is_idle():
              self.batch_result_processor.process_batch_result_idle(batch, result)
  
@@ -300,7 +337,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
          self._record_step_counters(batch, result)
  
          self.metrics_reporter.log_batch_result_stats(batch, result)
-@@ -5023,6 +5167,11 @@ class Scheduler(
+@@ -5023,6 +5181,11 @@
          # Resolved config (pristine server_args + post-publish overrides) so a
          # readback reflects values changed via /set_internal_state, not startup.
          ret = get_context().resolved_server_args_dict()
@@ -312,7 +349,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
          ret["world_size"] = compute_world_size(
              enable_dp_attention=get_parallel().enable_dp_attention,
              dp_size=get_parallel().dp_size,
-@@ -5082,6 +5231,14 @@ class Scheduler(
+@@ -5082,6 +5245,18 @@
  
      def set_internal_state(self, recv_req: SetInternalStateReq):
          server_args_dict = recv_req.server_args
@@ -320,14 +357,18 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
 +            from pig_governor.admin import execute
 +
 +            try:
++                previous_max_running = self.governor.max_running
 +                execute(self.governor, "patch", time.monotonic(), server_args_dict["pig_governor"])
++                if (self.governor.max_running != previous_max_running
++                        and getattr(self, "running_batch", None) is not None):
++                    self.running_batch.batch_is_full = False
 +                return SetInternalStateReqOutput(updated=True, control_nonce=recv_req.control_nonce)
 +            except ValueError:
 +                return SetInternalStateReqOutput(updated=False, control_nonce=recv_req.control_nonce)
          args_allow_update = set(
              [
                  "pp_max_micro_batch_size",
-@@ -5156,6 +5313,8 @@ class Scheduler(
+@@ -5156,6 +5331,8 @@
                  self.draft_worker.clear_info_records()
              if remaining:
                  get_context().override(source="update_server_args", **remaining)
@@ -336,7 +377,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
              logger.info(f"Config updated via context override: {remaining}")
  
          return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
-@@ -5200,6 +5359,8 @@ class Scheduler(
+@@ -5200,6 +5377,8 @@
  
          old_version = get_serving().weight_version
          get_context().override("scheduler.weight_version", weight_version=new_version)
@@ -345,7 +386,7 @@ index 9f5bc8c165009a5128b60c0a7d250ada38188788..ba63d893ecd196113574d084d6b3721e
  
          live_reqs = {
              *self.collect_inflight_reqs(),
-@@ -5896,6 +6057,10 @@ def run_scheduler_process(
+@@ -5896,6 +6075,10 @@
  def _make_abort_req(
      req: Req, finished_reason: Optional[FinishReasonDict] = None
  ) -> AbortReq:

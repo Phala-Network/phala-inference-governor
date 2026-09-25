@@ -1,0 +1,42 @@
+{
+  "schema": "phala.governor.recovery-window-fix-validation.v1",
+  "date": "2026-09-23",
+  "scope": "Authorized Linux CPU builder; source, native library and CPU regressions only. No GPU, immutable image, C2 or production acceptance is claimed.",
+  "source": {
+    "branch": "codex/recovery-window-fix-20260923",
+    "base_commit": "c27f4d10905eb7b2ef1bb2b01c14e8cc09236b44",
+    "changed_file": "rust/src/lib.rs",
+    "changed_file_sha256": "bc31d9171ad3930d0e948fee08a1b6cc291878e4c71e2c59f2c382a1bceef244"
+  },
+  "artifacts": {
+    "rust_builder": "rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0",
+    "sglang_test_image_id": "sha256:2e8f66174e6433dbd387fed13248d4c2a296b62f857da4c4083b1843f1ef8f89",
+    "release_library_sha256": "6fba5f657680fcb1049fbc8bf4d989e2d8abb88a4e2f377f7125aea26193361e"
+  },
+  "checks": {
+    "rust_unit_tests": 42,
+    "rust_release_check_and_build": true,
+    "governor_python_ffi_and_sglang_tests": 164,
+    "component_contract": true,
+    "component_contract_checks": 7,
+    "cold_transient_red_replay_fixed": true,
+    "cold_transient_fixed_checks": 5
+  },
+  "fixed_replay": {
+    "cold_first_admitted": true,
+    "recurring_admitted_after_short_window_recovery": true,
+    "recurring_conservative_tps": 56.25,
+    "live_only_admitted_after_recovery": true,
+    "live_only_conservative_tps": 64.0,
+    "sustained_slow_vetoed": true,
+    "idle_gap_beyond_short_window_still_vetoed": true
+  },
+  "boundaries": {
+    "gpu_acceptance": false,
+    "immutable_image_acceptance": false,
+    "c2_acceptance": false,
+    "redpill_fallback_acceptance": false,
+    "production_acceptance": false,
+    "format_check_note": "Current rustfmt reports pre-existing line-wrap differences in older observe_replacement blocks; the recovery-window change itself is formatted and no unrelated formatting was changed."
+  }
+}
