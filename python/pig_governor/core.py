@@ -128,6 +128,11 @@ class Governor:
                  C.c_uint32, C.c_uint32, C.c_uint64],
                 C.c_int32,
             ),
+            "observe_replacement": (
+                [C.c_void_p, C.c_double, C.c_uint64, C.c_double,
+                 C.c_uint32, C.c_uint32, C.c_uint64],
+                C.c_int32,
+            ),
             "prefill": ([C.c_void_p, C.c_double, C.c_double], C.c_int32),
             "update_reference": ([C.c_void_p, C.c_uint64, C.c_double], C.c_int32),
             "start_surface_epoch": (
@@ -253,6 +258,15 @@ class Governor:
             _integer(active_after),
         )
 
+    def observe_replacement(self, now, committed_decode_delta, sequence_seconds,
+                            concurrency, pressure_class, active_after):
+        """Atomically retire the whole prior active set and start a fresh run."""
+        self._call(
+            "observe_replacement", _finite(now), _integer(committed_decode_delta),
+            _finite(sequence_seconds), _concurrency(concurrency),
+            _pressure_class(pressure_class), _integer(active_after),
+        )
+
     def prefill(self, now, wall):
         self._call("prefill", _finite(now), _finite(wall))
 
@@ -355,6 +369,13 @@ class Governor:
             ))
         if result.abi_version != 4:
             raise RuntimeError("Incompatible admission ABI")
+        evidence_source = (
+            "aggregate_live"
+            if result.reason == 6
+            else "response_surface"
+            if result.evidence_concurrency != 0
+            else "none"
+        )
         return {
             "allowed": bool(result.allowed),
             "reason": result.reason,
@@ -366,5 +387,6 @@ class Governor:
             "pressure_class": result.pressure_class,
             "evidence_concurrency": result.evidence_concurrency,
             "evidence_pressure_class": result.evidence_pressure_class,
+            "evidence_source": evidence_source,
             "active_decode_sequences": result.active_sequences,
         }

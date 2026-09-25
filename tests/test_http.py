@@ -102,6 +102,7 @@ def profile_snapshot(epoch):
         'speculative_accept_threshold_acc': 0.9,
         'speculative_accept_threshold_single': 1.0,
         'speculative_algorithm': 'EAGLE',
+        'speculative_attention_mode': 'prefill',
         'speculative_draft_attention_backend': None,
         'speculative_draft_kv_cache_dtype': 'bfloat16',
         'speculative_eagle_topk': 1,
@@ -366,7 +367,7 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after["revision"], before["revision"])
         self.assertEqual(after["mutable"], before["mutable"])
 
-    async def test_patch_rejects_max_running_above_native_bound_in_scheduler(self):
+    async def test_patch_rejects_max_running_above_native_bound_before_dispatch(self):
         before = document(await self.get())
         body = json.dumps({
             "expected_epoch": before["epoch"],
@@ -375,10 +376,43 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         }).encode("utf-8")
         response = await self.patch({}, body=body)
         after = document(await self.get())
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(self.manager.set_calls, 1)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.manager.set_calls, 0)
         self.assertEqual(after["revision"], before["revision"])
         self.assertEqual(after["mutable"], before["mutable"])
+
+    async def test_max_running_boundary_accepts_limit_but_stale_cas_conflicts(self):
+        before = document(await self.get())
+        payload = {"expected_epoch": before["epoch"],
+                   "expected_revision": before["revision"], "max_running": 4}
+        valid = await self.patch({}, body=json.dumps(payload).encode())
+        self.assertEqual(valid.status_code, 200)
+        self.assertEqual(document(valid)["revision"], before["revision"] + 1)
+        payload["max_running"] = 2
+        stale = await self.patch({}, body=json.dumps(payload).encode())
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.headers["cache-control"], "no-store")
+        after = document(await self.get())
+        self.assertEqual(after["mutable"]["max_running"], 4)
+        self.assertEqual(after["revision"], before["revision"] + 1)
+
+    async def test_missing_or_invalid_native_bound_never_dispatches_patch(self):
+        before = document(await self.get())
+        body = json.dumps({"expected_epoch": before["epoch"],
+                           "expected_revision": before["revision"],
+                           "max_running": 2}).encode()
+        cases = [[], [{}], [{"pig_governor": []}]]
+        cases += [[{"pig_governor": {"native_max_running_requests": value}}]
+                  for value in (None, True, 0, -1, "4")]
+        for states in cases:
+            async def get_states():
+                return states
+            with self.subTest(states=states), patch.object(
+                    self.manager, "get_internal_state", side_effect=get_states):
+                response = await self.patch({}, body=body)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(self.manager.set_calls, 0)
 
     async def test_patch_rejects_oversized_body_before_scheduler_dispatch(self):
         body = b"{" + b"x" * 4096 + b"}"

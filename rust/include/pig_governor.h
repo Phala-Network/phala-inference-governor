@@ -8,6 +8,7 @@
 #define PIG_GOVERNOR_ADMISSION_COLD_PRIOR 3u
 #define PIG_GOVERNOR_ADMISSION_UNKNOWN 4u
 #define PIG_GOVERNOR_ADMISSION_WAITING_LIMIT 5u
+#define PIG_GOVERNOR_ADMISSION_AGGREGATE_TPS_RISK 6u
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,10 @@ extern "C" {
  * rolling-window evidence. Exact keys precede jointly-heavier fallback keys.
  * Admission observed is one only when selected live evidence constrains or is
  * qualified for the selected key; prior-only fits use COLD_PRIOR.
+ * AGGREGATE_TPS_RISK is a negative-only current-active-run live bound;
+ * evidence_concurrency is zero because it is not projected-cell evidence.
+ * The public Snapshot aggregate retains cross-run history and is not the exact
+ * arithmetic source for AGGREGATE_TPS_RISK.
  * A zero-cell profile uses a null cells pointer; nonzero count requires cells.
  * export_profile returns only currently qualified live surface cells.
  * start_surface_epoch requires active_after <= max_running_requests.
@@ -95,6 +100,18 @@ int32_t pig_governor_observe_batch(PigGovernor *handle, double now,
                                   uint32_t concurrency,
                                   uint32_t pressure_class,
                                   uint64_t active_after);
+/* Additive ABI-v4 extension required by the matching Python adapter.
+ * Every prior active request must have retired (caller owns identities).
+ * delta includes only retiring-set tokens with positive sequence_seconds;
+ * zero sequence_seconds requires delta == 0. Entrant tokens are deferred.
+ * Atomically records old evidence and resets only private active-run evidence.
+ * concurrency must equal the nonzero prior active count.
+ */
+int32_t pig_governor_observe_replacement(PigGovernor *handle, double now,
+                                        uint64_t delta, double sequence_seconds,
+                                        uint32_t concurrency,
+                                        uint32_t pressure_class,
+                                        uint64_t active_after);
 int32_t pig_governor_prefill(PigGovernor *handle, double now, double wall);
 int32_t pig_governor_update_reference(PigGovernor *handle,
                                     uint64_t expected_revision, double reference);

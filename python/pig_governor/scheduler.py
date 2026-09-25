@@ -17,6 +17,7 @@ ADMISSION_REASON_NAMES = {
     3: "cold_prior",
     4: "unknown",
     ADMISSION_REASON_WAITING_LIMIT: "waiting_limit",
+    6: "aggregate_tps_risk",
 }
 
 
@@ -42,32 +43,26 @@ class Reservation:
 class SchedulerGovernor:
     _CONTEXT_CLASS_UPPERS = (4_096, 16_384, 65_536)
 
-    def __init__(self, core, *, max_running_requests=1, max_running=None,
-                 max_waiting=MAX_WAITING_LIMIT):
+    @staticmethod
+    def _validate_limits(native_max_running, max_running, max_waiting):
         if (
-            type(max_running_requests) is not int
-            or max_running_requests <= 0
-            or max_running_requests >= 2**32
+            type(native_max_running) is not int
+            or not 0 < native_max_running < 2**32
         ):
             raise ValueError("Invalid native max_running_requests")
-        if max_running is None:
-            max_running = max_running_requests
-        if (
-            type(max_running) is not int
-            or max_running <= 0
-            or max_running > max_running_requests
-        ):
+        if type(max_running) is not int or not 0 < max_running <= native_max_running:
             raise ValueError("Invalid Governor max_running")
         if type(max_waiting) is not int or not 0 <= max_waiting <= MAX_WAITING_LIMIT:
             raise ValueError("Invalid Governor max_waiting")
-        if max_running + max_waiting >= 2**64:
-            raise ValueError("Governor admission capacity overflow")
+
+    def __init__(self, core, *, max_running_requests=1, max_running=None,
+                 max_waiting=MAX_WAITING_LIMIT):
+        if max_running is None:
+            max_running = max_running_requests
+        self._validate_limits(max_running_requests, max_running, max_waiting)
         self.core = core
         self._policy_lock = threading.RLock()
         self.active = 0
-        self.native_max_running_requests = max_running_requests
-        # Compatibility name used by existing component consumers. This is the
-        # immutable physical SGLang bound, not the mutable Governor policy.
         self.max_running_requests = max_running_requests
         self.max_running = max_running
         self.max_waiting = max_waiting
@@ -77,6 +72,10 @@ class SchedulerGovernor:
         self.active_pressure_counts = [0, 0, 0, 0]
         self._pending_evidence = {}
         self._surface_time = None
+
+    @property
+    def native_max_running_requests(self):
+        return self.max_running_requests
 
     @classmethod
     def _request_pressure_class(cls, req):
@@ -106,20 +105,6 @@ class SchedulerGovernor:
                 return index
         return candidate_class
 
-    def _decorate_admission(self, decision, projected_waiting):
-        result = dict(decision)
-        reason = result.get("reason")
-        if reason not in ADMISSION_REASON_NAMES:
-            raise RuntimeError("Governor returned an unknown admission reason")
-        result.update({
-            "reason_name": ADMISSION_REASON_NAMES[reason],
-            "projected_waiting": projected_waiting,
-            "max_waiting": self.max_waiting,
-            "max_running": self.max_running,
-            "native_max_running_requests": self.native_max_running_requests,
-        })
-        return result
-
     def admit_request(self, req, now, *, is_retracted=False, waiting_count=None):
         """Atomically forecast and reserve one native request.
 
@@ -141,15 +126,18 @@ class SchedulerGovernor:
             )
             if waiting_count is None:
                 # Unit-level and compatibility callers may not have access to
-                # SGLang's separate ordinary/grammar queues. The reservation
-                # ledger still enforces the mutable running/waiting capacity.
+                # SGLang's separate ordinary/grammar queues. Keep their
+                # historical logical-capacity behavior; the native scheduler
+                # always supplies an exact waiting owner count.
                 waiting_before = max(0, self.outstanding - self.max_running)
+                projected_waiting = logical_projected_waiting
             else:
-                if type(waiting_count) is not int or not 0 <= waiting_count < 2**32:
+                if type(waiting_count) is not int or not 0 <= waiting_count < 2**32 - 1:
                     raise ValueError("Invalid waiting_count")
                 waiting_before = waiting_count
-            if waiting_before >= 2**32 - 1:
-                raise ValueError("Waiting count overflow")
+                projected_waiting = max(
+                    logical_projected_waiting, waiting_before + 1
+                )
 
             pressure_class = self._request_pressure_class(req)
             # The TPS surface describes the physical SGLang runnable range. A
@@ -157,12 +145,20 @@ class SchedulerGovernor:
             projected_concurrency = min(
                 outstanding_after, self.native_max_running_requests
             )
-            projected_waiting = logical_projected_waiting
             projected_pressure = self._projected_pressure_class(pressure_class)
-            decision = self._decorate_admission(
-                self.core.admit(now, projected_concurrency, projected_pressure),
-                projected_waiting,
+            decision = dict(
+                self.core.admit(now, projected_concurrency, projected_pressure)
             )
+            reason = decision.get("reason")
+            if reason not in ADMISSION_REASON_NAMES:
+                raise RuntimeError("Governor returned an unknown admission reason")
+            decision.update({
+                "reason_name": ADMISSION_REASON_NAMES[reason],
+                "projected_waiting": projected_waiting,
+                "max_waiting": self.max_waiting,
+                "max_running": self.max_running,
+                "native_max_running_requests": self.native_max_running_requests,
+            })
             self.last_waiting_count = waiting_before
             # Keep TPS-first provenance. The waiting limit is evaluated only
             # after the physical projected cell is fit.
@@ -208,16 +204,9 @@ class SchedulerGovernor:
             )
             max_waiting = changes.get("max_waiting", self.max_waiting)
             max_running = changes.get("max_running", self.max_running)
-            if (
-                type(max_running) is not int
-                or max_running <= 0
-                or max_running > self.native_max_running_requests
-            ):
-                raise ValueError("Invalid Governor max_running")
-            if type(max_waiting) is not int or not 0 <= max_waiting <= MAX_WAITING_LIMIT:
-                raise ValueError("Invalid Governor max_waiting")
-            if max_running + max_waiting >= 2**64:
-                raise ValueError("Governor admission capacity overflow")
+            self._validate_limits(
+                self.native_max_running_requests, max_running, max_waiting
+            )
             # The core owns the epoch/revision CAS. Validate every Python field
             # before this sole mutating call; the assignments below cannot fail.
             self.core.update_reference(
@@ -252,6 +241,7 @@ class SchedulerGovernor:
         entering = [0, 0, 0, 0]
         leaving = [0, 0, 0, 0]
         total_delta = 0
+        entering_delta = 0
         proposed = []
 
         for progress, output_tokens, terminal, pressure_class in updates:
@@ -281,6 +271,7 @@ class SchedulerGovernor:
                 entering_request = output_tokens > 0 and not terminal
                 if entering_request:
                     entering[pressure_class] += 1
+                    entering_delta += delta
                 if terminal:
                     delta = 0
             if progress.decoding and terminal:
@@ -314,7 +305,34 @@ class SchedulerGovernor:
             key: value for key, value in self._pending_evidence.items()
             if now - value[1] <= 60.0
         }
-        if active_before > 0 and total_sequence_seconds > 0:
+        # A run ends when all old requests retire, even if entrants keep the
+        # active count positive. New entrants have no elapsed exposure yet.
+        full_replacement = active_before > 0 and sum(leaving) == active_before
+        if active_before == 0 or full_replacement:
+            prior_pending = pending_evidence
+            pending_evidence = {}
+        else:
+            prior_pending = pending_evidence
+        if full_replacement:
+            if entering_delta >= 2**64:
+                raise ValueError("Pending Decode token count overflow")
+            if entering_delta:
+                active_pressure_after = max(
+                    (index for index, count in enumerate(pressure_after) if count),
+                    default=0,
+                )
+                pending_evidence[(active_after, active_pressure_after)] = (entering_delta, now)
+            retired_delta = 0
+            if total_sequence_seconds > 0:
+                pending_tokens, _ = prior_pending.get(
+                    (active_before, active_pressure_before), (0, now)
+                )
+                retired_delta = total_delta - entering_delta + pending_tokens
+            self.core.observe_replacement(
+                now, retired_delta, total_sequence_seconds,
+                active_before, active_pressure_before, active_after,
+            )
+        elif active_before > 0 and total_sequence_seconds > 0:
             cell = (active_before, active_pressure_before)
             pending_tokens, _ = pending_evidence.pop(cell, (0, now))
             self.core.observe_batch(
@@ -340,6 +358,8 @@ class SchedulerGovernor:
                         raise ValueError("Pending Decode token count overflow")
                     pending_evidence[cell] = (pending_tokens, now)
             self.core.observe(now, 0, active_after)
+        if active_after == 0:
+            pending_evidence.clear()
         for progress, output_tokens, new_decoding, terminal, new_last_time in proposed:
             progress.output_tokens = output_tokens
             progress.decoding = new_decoding

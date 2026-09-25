@@ -54,6 +54,17 @@ class BindingCompatibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_new"):
                 Governor(50, max_running_requests=4, library=os.path.abspath("v4.dll"))
 
+    def test_v4_library_without_replacement_extension_is_rejected(self):
+        real = C.CDLL(os.environ["PIG_GOVERNOR_LIBRARY"])
+        class OldV4:
+            def __getattr__(self, name):
+                if name == "pig_governor_observe_replacement":
+                    raise AttributeError(name)
+                return getattr(real, name)
+        with mock.patch.object(core_module.C, "CDLL", return_value=OldV4()):
+            with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_observe_replacement"):
+                Governor(50, max_running_requests=4, library=os.path.abspath("old-v4.dll"))
+
 
 class NativeAbiTests(unittest.TestCase):
     def setUp(self):
@@ -226,6 +237,80 @@ class NativeAbiTests(unittest.TestCase):
         self.assertEqual(expiry.admit(0.999, 1, 0)["reason"], 3)
         self.assertEqual(expiry.admit(1, 1, 0)["reason"], 4)
         self.assertEqual(expiry.snapshot(1)["profile"]["cell_count"], 0)
+
+    def test_stale_low_cell_refill_reaches_v4_admission_boundary(self):
+        core = Governor(
+            50, max_running_requests=43,
+            profile_cells=[self.profile_cell(39, 2, 58)],
+            profile_ttl_seconds=100, now=1,
+        )
+        self.addCleanup(core.close)
+        core.observe_batch(2.0, 0, 0.5, 39, 2, 38)
+        self.assertEqual(core.admit(2.1, 39, 2)["reason"], 2)
+        core.observe(2.5, 1200, 38)
+        core.observe(3.0, 1200, 38)
+        self.assertEqual(core.admit(3.1, 39, 2)["reason"], 2)
+        core.observe(4.1, 2200, 38)
+        recovered = core.admit(4.1, 39, 2)
+        self.assertTrue(recovered["allowed"])
+        self.assertEqual(recovered["reason"], 3)
+        self.assertEqual(recovered["projected_tps"], 58)
+        self.assertEqual(recovered["evidence_source"], "response_surface")
+
+    def test_aggregate_live_cross_cell_veto_has_explicit_source(self):
+        core = Governor(
+            50,
+            max_running_requests=4,
+            profile_cells=[self.profile_cell(2, 0, 56)],
+            profile_ttl_seconds=120,
+            now=0,
+        )
+        self.addCleanup(core.close)
+        core.observe(0, 0, 1)
+        core.observe_batch(6.84046809701249, 25, 6.84046809701249, 1, 0, 1)
+
+        decision = core.admit(6.84046809701249, 2, 0)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], 6)
+        self.assertEqual(decision["evidence_source"], "aggregate_live")
+        self.assertEqual(decision["evidence_concurrency"], 0)
+        self.assertAlmostEqual(decision["projected_tps"], 10.681623916135177)
+
+    def test_aggregate_recovery_uses_healthy_short_window(self):
+        self.check_aggregate_recovery((5, 5, 55, 55), allowed=True, reason=3)
+
+    def test_aggregate_recovery_keeps_sustained_slow_veto(self):
+        self.check_aggregate_recovery((5, 5, 5, 5), allowed=False, reason=6)
+
+    def test_aggregate_requires_minimum_real_exposure(self):
+        core = Governor(
+            50, max_running_requests=43,
+            profile_cells=[self.profile_cell(2, 0, 56)],
+            profile_ttl_seconds=120, now=0,
+        )
+        self.addCleanup(core.close)
+        core.observe(0, 0, 1)
+        core.observe_batch(.05, 1, .05, 1, 0, 1)
+        self.assertEqual(core.admit(.05, 2, 0)["reason"], 3)
+        qualified = core.admit(.1, 2, 0)
+        self.assertFalse(qualified["allowed"])
+        self.assertEqual(qualified["reason"], 6)
+        self.assertEqual(qualified["projected_tps"], 10.0)
+
+    def check_aggregate_recovery(self, deltas, *, allowed, reason):
+        core = Governor(
+            50, max_running_requests=43,
+            profile_cells=[self.profile_cell(2, 0, 56)],
+            profile_ttl_seconds=120, now=0,
+        )
+        self.addCleanup(core.close)
+        core.observe(0, 0, 1)
+        for now, delta in zip((1.0, 1.5, 2.0, 2.5), deltas):
+            core.observe_batch(now, delta, .5, 1, 0, 1)
+        decision = core.admit(4.0, 2, 0)
+        self.assertEqual(decision["allowed"], allowed)
+        self.assertEqual(decision["reason"], reason)
+        self.assertEqual(decision["projected_tps"], 56.0 if allowed else 5.0)
 
     def test_profile_constructor_requires_complete_valid_input(self):
         with self.assertRaises(ValueError):

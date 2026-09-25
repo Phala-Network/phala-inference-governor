@@ -23,7 +23,7 @@ MAX_PROFILE_BYTES = 64 * 1024
 PREDICTOR = {
     "abi_version": 4,
     "surface_schema_version": 1,
-    "algorithm": "min-short-2s-long-60s-v1",
+    "algorithm": "min-short-2s-long-60s-prior-reprobe-v2",
     "bucket_seconds": 0.5,
     "short_window_seconds": 2,
     "long_window_seconds": 60,

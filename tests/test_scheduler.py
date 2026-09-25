@@ -9,6 +9,7 @@ class Core:
     def __init__(self):
         self.rows = []
         self.allowed = True
+        self.reason = 2
         self.last_time = None
         self.epoch = "1" * 32
         self.revision = 1
@@ -29,6 +30,14 @@ class Core:
         self.observe_surface(now, delta, duration, concurrency, pressure_class)
         self.observe(now, delta, active_after)
 
+    def observe_replacement(self, now, delta, duration, concurrency,
+                            pressure_class, active_after):
+        if duration > 0:
+            self.observe_batch(now, delta, duration, concurrency,
+                               pressure_class, active_after)
+        else:
+            self.observe(now, 0, active_after)
+
     def admit(self, now, projected_concurrency, pressure_class):
         self.rows.append(
             ("admit", now, projected_concurrency, pressure_class)
@@ -36,7 +45,7 @@ class Core:
         return {
             "allowed": self.allowed,
             "projected_tps": 100 if self.allowed else 10,
-            "reason": 0 if self.allowed else 2,
+            "reason": self.reason if not self.allowed else 0,
         }
 
     def snapshot(self, now):
@@ -72,6 +81,19 @@ class LifecycleTests(unittest.TestCase):
     def test_max_running_requests_is_bounded_to_32_bits(self):
         with self.assertRaises(ValueError):
             SchedulerGovernor(Core(), max_running_requests=2**32)
+
+    def test_policy_update_rejects_none_without_mutation(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4, max_running=3)
+        before = (core.reference, core.revision, adapter.max_running)
+        with self.assertRaisesRegex(ValueError, "Invalid Governor max_running"):
+            adapter.update_policy(
+                1, expected_epoch=core.epoch, expected_revision=core.revision,
+                max_running=None,
+            )
+        self.assertEqual(
+            (core.reference, core.revision, adapter.max_running), before
+        )
 
     def test_first_decode_token_is_excluded_and_entering_exposure_starts(self):
         core = Core()
@@ -145,6 +167,73 @@ class LifecycleTests(unittest.TestCase):
         adapter.committed(first, 2, 3, pressure_class=0)
         self.assertIn(("surface", 2, 1, 1.0, 1, 0), core.rows)
         self.assertEqual(adapter._pending_evidence[(2, 0)][0], 2)
+
+    def test_zero_time_tokens_are_cleared_when_active_run_ends(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        old = Progress()
+        new = Progress()
+
+        adapter.committed(old, 1, 1, pressure_class=0)
+        adapter.committed(old, 1, 101, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 100)
+        adapter.terminated(old, 1, pressure_class=0)
+        self.assertEqual(adapter._pending_evidence, {})
+
+        adapter.committed(new, 2, 1, pressure_class=0)
+        adapter.committed(new, 3, 2, pressure_class=0)
+        self.assertIn(("surface", 3, 1, 1.0, 1, 0), core.rows)
+
+    def test_zero_time_full_replacement_keeps_only_new_run_pending_tokens(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        old = Progress()
+        new = Progress()
+
+        adapter.committed(old, 1, 1, pressure_class=0)
+        adapter.committed(old, 1, 101, pressure_class=0)
+        adapter.commit_batch(
+            [(old, 102, True, 0), (new, 3, False, 0)],
+            1,
+        )
+        self.assertEqual(adapter.active, 1)
+        self.assertEqual(adapter._pending_evidence[(1, 0)][0], 2)
+
+        adapter.committed(new, 2, 4, pressure_class=0)
+        self.assertIn(("surface", 2, 3, 1.0, 1, 0), core.rows)
+
+    def test_positive_time_replacement_defers_only_entrant_decode_tokens(self):
+        core = Core()
+        adapter = SchedulerGovernor(core)
+        old, new = Progress(), Progress()
+        adapter.committed(old, 0, 1)
+        adapter.committed(old, 0, 101)
+        adapter.commit_batch([(old, 102, True, 0), (new, 3, False, 0)], 1)
+        self.assertIn(("surface", 1, 101, 1.0, 1, 0), core.rows)
+        self.assertEqual(adapter._pending_evidence, {(1, 0): (2, 1)})
+        adapter.committed(new, 2, 4)
+        self.assertIn(("surface", 2, 3, 1.0, 1, 0), core.rows)
+
+    def test_replacement_native_failure_does_not_publish_python_state(self):
+        class FailingCore(Core):
+            def observe_replacement(self, *args):
+                raise ValueError("native rejected")
+        core = FailingCore()
+        adapter = SchedulerGovernor(core)
+        old, new = Progress(), Progress()
+        adapter.committed(old, 0, 1)
+        adapter.committed(old, 0, 101)
+        before = (tuple(getattr(old, key) for key in old.__slots__), tuple(getattr(new, key) for key in new.__slots__), adapter.active,
+                  list(adapter.active_pressure_counts),
+                  dict(adapter._pending_evidence), adapter._surface_time,
+                  list(core.rows))
+        with self.assertRaisesRegex(ValueError, "native rejected"):
+            adapter.commit_batch([(old, 102, True, 0), (new, 3, False, 0)], 1)
+        after = (tuple(getattr(old, key) for key in old.__slots__), tuple(getattr(new, key) for key in new.__slots__), adapter.active,
+                 list(adapter.active_pressure_counts),
+                 dict(adapter._pending_evidence), adapter._surface_time,
+                 list(core.rows))
+        self.assertEqual(after, before)
 
     def test_terminal_decode_records_interval_and_leaves_active(self):
         core = Core()
@@ -247,31 +336,66 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(rejected["reason_name"], "waiting_limit")
         self.assertEqual(adapter.outstanding, 7)
 
-    def test_zero_waiting_limit_allows_running_slots_only(self):
+    def test_zero_waiting_limit_pauses_new_native_admission_until_cas_restore(self):
         core = Core()
         adapter = SchedulerGovernor(
             core, max_running_requests=4, max_running=2, max_waiting=0
         )
-        first = adapter.admit_request(request("first"), 1, waiting_count=0)
-        second = adapter.admit_request(request("second"), 1, waiting_count=0)
-        third_req = request("third")
-        third = adapter.admit_request(third_req, 1, waiting_count=0)
+        paused_req = request("paused")
+        paused = adapter.admit_request(paused_req, 1, waiting_count=0)
+        self.assertFalse(paused["allowed"])
+        self.assertEqual(paused["projected_waiting"], 1)
+        self.assertEqual(paused["reason_name"], "waiting_limit")
+        self.assertFalse(hasattr(paused_req, "governor_reservation"))
+
+        adapter.update_policy(
+            2,
+            expected_epoch=core.epoch,
+            expected_revision=core.revision,
+            max_waiting=3,
+        )
+        resumed = adapter.admit_request(request("resumed"), 3, waiting_count=0)
+        self.assertTrue(resumed["allowed"])
+        self.assertEqual(resumed["projected_waiting"], 1)
+
+    def test_compatibility_call_without_native_count_uses_logical_capacity(self):
+        core = Core()
+        adapter = SchedulerGovernor(
+            core, max_running_requests=4, max_running=2, max_waiting=0
+        )
+        first = adapter.admit_request(request("first"), 1)
+        second = adapter.admit_request(request("second"), 1)
+        third = adapter.admit_request(request("third"), 1)
         self.assertTrue(first["allowed"])
         self.assertTrue(second["allowed"])
-        self.assertEqual(second["projected_waiting"], 0)
         self.assertFalse(third["allowed"])
         self.assertEqual(third["projected_waiting"], 1)
         self.assertEqual(third["reason_name"], "waiting_limit")
-        self.assertFalse(hasattr(third_req, "governor_reservation"))
 
-    def test_explicit_native_waiting_population_is_telemetry_only(self):
+    def test_native_waiting_limit_allows_three_and_rejects_the_fourth(self):
         core = Core()
         adapter = SchedulerGovernor(core, max_running_requests=43)
-        decision = adapter.admit_request(request("candidate"), 1, waiting_count=3)
-        self.assertTrue(decision["allowed"])
-        self.assertEqual(decision["projected_waiting"], 0)
+        decisions = [
+            adapter.admit_request(request(str(index)), 1, waiting_count=index)
+            for index in range(4)
+        ]
+        self.assertTrue(all(decision["allowed"] for decision in decisions[:3]))
+        self.assertFalse(decisions[3]["allowed"])
+        self.assertEqual(decisions[3]["projected_waiting"], 4)
+        self.assertEqual(decisions[3]["reason_name"], "waiting_limit")
         self.assertEqual(adapter.last_waiting_count, 3)
-        self.assertEqual(adapter.outstanding, 1)
+        self.assertEqual(adapter.outstanding, 3)
+
+    def test_native_waiting_hard_limit_has_no_running_slot_exception(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=43)
+        req = request("candidate")
+        decision = adapter.admit_request(req, 1, waiting_count=3)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["projected_waiting"], 4)
+        self.assertEqual(decision["reason_name"], "waiting_limit")
+        self.assertEqual(adapter.outstanding, 0)
+        self.assertFalse(hasattr(req, "governor_reservation"))
 
     def test_reference_zero_still_enforces_logical_capacity(self):
         core = Core()
@@ -292,26 +416,20 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(decisions[3]["projected_waiting"], 2)
         self.assertEqual(adapter.outstanding, 3)
 
-    def test_logical_capacity_is_the_waiting_hard_gate(self):
+    def test_projected_waiting_is_maximum_of_logical_and_native_occupancy(self):
         core = Core()
         adapter = SchedulerGovernor(
-            core, max_running_requests=8, max_running=2, max_waiting=0
+            core, max_running_requests=8, max_running=2, max_waiting=3
         )
         first = adapter.admit_request(request("first"), 1, waiting_count=0)
-        second = adapter.admit_request(request("second"), 1, waiting_count=3)
-        self.assertEqual(adapter.last_waiting_count, 3)
-        third_req = request("third")
-        third = adapter.admit_request(third_req, 1, waiting_count=0)
-        self.assertEqual(
-            [first["projected_waiting"], second["projected_waiting"]], [0, 0]
-        )
+        second = adapter.admit_request(request("second"), 1, waiting_count=2)
+        third = adapter.admit_request(request("third"), 1, waiting_count=0)
         self.assertTrue(first["allowed"])
         self.assertTrue(second["allowed"])
-        self.assertEqual(adapter.last_waiting_count, 0)
-        self.assertFalse(third["allowed"])
-        self.assertEqual(third["reason_name"], "waiting_limit")
+        self.assertTrue(third["allowed"])
+        self.assertEqual(first["projected_waiting"], 1)
+        self.assertEqual(second["projected_waiting"], 3)
         self.assertEqual(third["projected_waiting"], 1)
-        self.assertFalse(hasattr(third_req, "governor_reservation"))
 
     def test_waiting_policy_cannot_raise_the_hard_limit(self):
         core = Core()
@@ -329,15 +447,26 @@ class LifecycleTests(unittest.TestCase):
     def test_tps_rejection_keeps_precedence_when_waiting_is_also_over_limit(self):
         core = Core()
         adapter = SchedulerGovernor(
-            core, max_running_requests=1, max_running=1, max_waiting=1
+            core, max_running_requests=43, max_running=43, max_waiting=3
         )
-        self.assertTrue(adapter.admit_request(request("fit"), 1)["allowed"])
         core.allowed = False
-        decision = adapter.admit_request(request("both-red"), 2)
+        decision = adapter.admit_request(
+            request("both-red"), 2, waiting_count=3
+        )
         self.assertFalse(decision["allowed"])
         self.assertEqual(decision["reason"], 2)
         self.assertEqual(decision["reason_name"], "tps_risk")
-        self.assertEqual(decision["projected_waiting"], 1)
+        self.assertEqual(decision["projected_waiting"], 4)
+
+    def test_aggregate_tps_reason_is_preserved_by_scheduler(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        core.allowed = False
+        core.reason = 6
+        decision = adapter.admit_request(request("aggregate-low"), 2)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], 6)
+        self.assertEqual(decision["reason_name"], "aggregate_tps_risk")
 
     def test_policy_update_is_atomic_and_uses_native_tps_projection(self):
         core = Core()
@@ -379,12 +508,16 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(adapter.outstanding, 4)
         self.assertTrue(all(not req.governor_reservation.released for req in reqs))
-        blocked = adapter.admit_request(request("blocked"), 2)
+        blocked = adapter.admit_request(
+            request("blocked"), 2, waiting_count=0
+        )
         self.assertFalse(blocked["allowed"])
         self.assertEqual(blocked["reason_name"], "waiting_limit")
         for req in reqs[:3]:
             self.assertTrue(adapter.release_request(req))
-        allowed = adapter.admit_request(request("after-drain"), 3)
+        allowed = adapter.admit_request(
+            request("after-drain"), 3, waiting_count=0
+        )
         self.assertTrue(allowed["allowed"])
         self.assertEqual(allowed["projected_waiting"], 1)
 
@@ -410,8 +543,10 @@ class LifecycleTests(unittest.TestCase):
         core = Core()
         adapter = SchedulerGovernor(core, max_running_requests=4)
         req = request("retracted")
-        first = adapter.admit_request(req, 1)
-        repeated = adapter.admit_request(req, 2, is_retracted=True)
+        first = adapter.admit_request(req, 1, waiting_count=0)
+        repeated = adapter.admit_request(
+            req, 2, is_retracted=True, waiting_count=3
+        )
         self.assertTrue(first["allowed"])
         self.assertTrue(repeated["allowed"])
         self.assertEqual(len([row for row in core.rows if row[0] == "admit"]), 1)

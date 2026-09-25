@@ -246,7 +246,6 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
             for path in (
                 "/v1/chat/completions",
                 "/v1/completions",
-                "/v1/responses",
             ):
                 for stream in (False, True):
                     with self.subTest(path=path, stream=stream, message=message):
@@ -256,9 +255,35 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
                             response.headers.get("content-type"), "text/event-stream"
                         )
                         body = response.json()
-                        error = body.get("error", body)
+                        self.assertEqual(set(body), {"error"})
+                        error = body["error"]
+                        self.assertIsInstance(error, dict)
+                        self.assertTrue({"message", "type", "param", "code"} <= set(error))
+                        if "object" in error:
+                            self.assertEqual(error["object"], "error")
                         self.assertEqual(error["message"], message)
+                        self.assertEqual(error["type"], "429")
+                        self.assertIsNone(error["param"])
                         self.assertEqual(error["code"], 429)
+
+            for stream in (False, True):
+                with self.subTest(path="/v1/responses", stream=stream, message=message):
+                    response = await self.client.post(
+                        "/v1/responses", json={"stream": stream})
+                    self.assertEqual(response.status_code, 429)
+                    self.assertNotEqual(
+                        response.headers.get("content-type"), "text/event-stream"
+                    )
+                    body = response.json()
+                    self.assertEqual(set(body), {"error"})
+                    error = body["error"]
+                    self.assertIsInstance(error, dict)
+                    self.assertTrue({"message", "type", "param", "code"} <= set(error))
+                    self.assertNotIn("error", error)
+                    self.assertEqual(error["message"], message)
+                    self.assertEqual(error["type"], "invalid_request_error")
+                    self.assertIsNone(error["param"])
+                    self.assertEqual(error["code"], 429)
 
     async def test_normal_streams_still_start_as_sse(self):
         self.manager.reject = False

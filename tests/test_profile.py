@@ -68,6 +68,7 @@ def resolved_runtime():
         "speculative_accept_threshold_acc": None,
         "speculative_accept_threshold_single": None,
         "speculative_algorithm": None,
+        "speculative_attention_mode": None,
         "speculative_draft_attention_backend": None,
         "speculative_draft_kv_cache_dtype": None,
         "speculative_eagle_topk": None,
@@ -158,6 +159,12 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(loaded.missing, ())
         self.assertEqual(loaded.ttl_seconds, 86400.0)
         self.assertRegex(loaded.sha256, r"^[0-9a-f]{64}$")
+
+    def test_previous_predictor_profile_is_rejected(self):
+        document = copy.deepcopy(self.document)
+        document["predictor"]["algorithm"] = "min-short-2s-long-60s-v1"
+        with self.assertRaisesRegex(ValueError, "predictor does not match"):
+            self.validate(document)
 
     def test_profile_capacity_is_a_fail_closed_minimum(self):
         profile_runtime = resolved_runtime()

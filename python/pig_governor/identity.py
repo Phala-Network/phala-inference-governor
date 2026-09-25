@@ -27,7 +27,8 @@ _STRING_FIELDS = frozenset({
 _OPTIONAL_STRING_FIELDS = frozenset({
     "cuda_graph_backend_decode", "cuda_graph_backend_prefill",
     "decode_attention_backend", "prefill_attention_backend", "quantization",
-    "speculative_algorithm", "speculative_draft_attention_backend",
+    "speculative_algorithm", "speculative_attention_mode",
+    "speculative_draft_attention_backend",
     "speculative_draft_kv_cache_dtype", "weight_version",
 })
 _POSITIVE_INTEGER_FIELDS = frozenset({

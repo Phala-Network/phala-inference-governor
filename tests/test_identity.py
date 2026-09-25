@@ -57,6 +57,7 @@ def resolved_runtime():
         "speculative_accept_threshold_acc": None,
         "speculative_accept_threshold_single": None,
         "speculative_algorithm": None,
+        "speculative_attention_mode": None,
         "speculative_draft_attention_backend": None,
         "speculative_draft_kv_cache_dtype": None,
         "speculative_eagle_topk": None,
@@ -143,6 +144,20 @@ class RuntimeIdentityTests(unittest.TestCase):
         actual = build_runtime_identity(changed_runtime, ENVIRONMENT)
         with self.assertRaisesRegex(ValueError, "runtime.dtype"):
             compare_identity(expected, actual)
+
+    def test_mtp_attention_mode_is_bound_to_identity(self):
+        profile_runtime = resolved_runtime()
+        profile_runtime["speculative_algorithm"] = "EAGLE"
+        profile_runtime["speculative_attention_mode"] = "prefill"
+        profile = build_runtime_identity(profile_runtime, ENVIRONMENT)
+        current_runtime = dict(profile_runtime)
+        current_runtime["speculative_attention_mode"] = "decode"
+        current = build_runtime_identity(current_runtime, ENVIRONMENT)
+        difference = first_identity_difference(profile, current)
+        self.assertIsNotNone(difference)
+        self.assertEqual(difference.field, "runtime.speculative_attention_mode")
+        with self.assertRaisesRegex(ValueError, "runtime.speculative_attention_mode"):
+            compare_identity(profile, current)
 
     def test_profile_compatibility_accepts_equal_or_greater_probed_capacity(self):
         profile_runtime = resolved_runtime()
