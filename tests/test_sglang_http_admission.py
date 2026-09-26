@@ -1,5 +1,6 @@
 """HTTP propagation for scheduler-side Governor admission rejection."""
 
+import json
 import unittest
 from http import HTTPStatus
 from types import SimpleNamespace
@@ -8,16 +9,17 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 from httpx import ASGITransport, AsyncClient
 
+from utils import engine_chunk, make_serving
+from sglang.srt.entrypoints.openai.protocol import ResponsesRequest
 from sglang.srt.entrypoints.openai.serving_base import (
-    GenerationStreamingResponse,
     OpenAIServingBase,
 )
 from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
 from sglang.srt.entrypoints.openai.serving_completions import (
     OpenAIServingCompletion,
 )
-from sglang.srt.entrypoints.openai.serving_responses import OpenAIServingResponses
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.runtime_context import reset_context
 
 
 ADMISSION_MESSAGE = "The request is rejected by Governor TPS admission."
@@ -189,8 +191,6 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.manager = _FakeManager()
         common_serving = _OpenAIProbeServing(self.manager)
-        responses_serving = object.__new__(OpenAIServingResponses)
-        responses_serving.tokenizer_manager = self.manager
 
         app = FastAPI()
 
@@ -202,40 +202,6 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
 
         app.post("/v1/chat/completions")(common_endpoint)
         app.post("/v1/completions")(common_endpoint)
-
-        @app.post("/v1/responses")
-        async def responses_endpoint(raw_request: Request):
-            payload = await raw_request.json()
-            adapted_request = SimpleNamespace(background=False)
-            generator = self.manager.generate_request(adapted_request, raw_request)
-            if not payload.get("stream", False):
-                try:
-                    result = await responses_serving._first_generated_response(
-                        adapted_request, raw_request
-                    )
-                except HTTPException as exc:
-                    return responses_serving.create_error_response(
-                        exc.detail, status_code=exc.status_code
-                    )
-                return ORJSONResponse(result)
-
-            try:
-                generator = await responses_serving._generator_after_first_item(
-                    generator, raw_request
-                )
-            except HTTPException as exc:
-                return responses_serving.create_error_response(
-                    exc.detail, status_code=exc.status_code
-                )
-
-            async def events():
-                yield 'event: response.created\ndata: {"type":"response.created"}\n\n'
-                async for result in generator:
-                    yield f'event: response.completed\ndata: {result["text"]}\n\n'
-
-            return GenerationStreamingResponse(
-                events(), generation=generator, media_type="text/event-stream"
-            )
 
         self.client = AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -268,31 +234,11 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIsNone(body["param"])
                         self.assertEqual(body["code"], 429)
 
-            for stream in (False, True):
-                with self.subTest(path="/v1/responses", stream=stream, message=message):
-                    response = await self.client.post(
-                        "/v1/responses", json={"stream": stream})
-                    self.assertEqual(response.status_code, 429)
-                    self.assertNotEqual(
-                        response.headers.get("content-type"), "text/event-stream"
-                    )
-                    body = response.json()
-                    self.assertEqual(set(body), {"error"})
-                    error = body["error"]
-                    self.assertIsInstance(error, dict)
-                    self.assertTrue({"message", "type", "param", "code"} <= set(error))
-                    self.assertNotIn("error", error)
-                    self.assertEqual(error["message"], message)
-                    self.assertEqual(error["type"], "invalid_request_error")
-                    self.assertIsNone(error["param"])
-                    self.assertEqual(error["code"], 429)
-
     async def test_normal_streams_still_start_as_sse(self):
         self.manager.reject = False
         for path in (
             "/v1/chat/completions",
             "/v1/completions",
-            "/v1/responses",
         ):
             with self.subTest(path=path):
                 response = await self.client.post(path, json={"stream": True})
@@ -301,6 +247,59 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
                     response.headers["content-type"].startswith("text/event-stream")
                 )
                 self.assertIn("ok", response.text)
+
+
+class ResponsesAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        reset_context()
+        self.serving = make_serving()
+        self.serving.use_harmony = False
+        self.serving.default_chat_template_kwargs = {}
+        self.serving.template_manager.chat_template_name = None
+        self.serving.template_manager.jinja_template_content_format = "string"
+        self.serving.tokenizer_manager.tokenizer.apply_chat_template.return_value = [1, 2, 3]
+        self.serving.reasoning_parser = None
+        self.serving.tool_call_parser = None
+        self.reject = True
+        self.message = ADMISSION_MESSAGE
+
+        async def generate(*args, **kwargs):
+            if self.reject:
+                raise HTTPException(status_code=429, detail=self.message)
+            yield engine_chunk("ok", finish=True)
+
+        self.serving.tokenizer_manager.generate_request = generate
+
+    async def asyncTearDown(self):
+        reset_context()
+
+    async def test_responses_rejection_precedes_headers(self):
+        for message in (ADMISSION_MESSAGE, WAITING_MESSAGE):
+            self.message = message
+            for stream in (False, True):
+                with self.subTest(stream=stream, message=message):
+                    request = ResponsesRequest(model="x", input="hi", stream=stream)
+                    response = await self.serving.create_responses(request)
+                    self.assertEqual(response.status_code, 429)
+                    self.assertNotEqual(response.media_type, "text/event-stream")
+                    self.assertEqual(json.loads(response.body), {
+                        "error": {
+                            "message": message,
+                            "type": "invalid_request_error",
+                            "param": None,
+                            "code": 429,
+                        },
+                    })
+
+    async def test_normal_responses_stream_starts_as_sse(self):
+        self.reject = False
+        request = ResponsesRequest(model="x", input="hi", stream=True)
+        response = await self.serving.create_responses(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.media_type, "text/event-stream")
+        events = [event async for event in response.body_iterator]
+        self.assertTrue(events[0].startswith("event: response.created"))
+        self.assertTrue(any("response.completed" in event for event in events))
 
 
 if __name__ == "__main__":

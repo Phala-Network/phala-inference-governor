@@ -75,14 +75,14 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang
-          ref: 14624e954902bf2bed035631ed936c51701cec85
+          ref: ff72db0da9a57ed77ed36b18d9ef260d00ec886f
           path: sglang-complete
           persist-credentials: false
       - name: Checkout compatible serving patches
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang-serving-patches
-          ref: 643950b851990f2671ea40c3a1b574ceff98e3d2
+          ref: 2a47f147d77310592a40712c07fe06559f0fe9fd
           path: serving-patches
           persist-credentials: false
       - uses: actions/download-artifact@v4
@@ -93,10 +93,10 @@ jobs:
         shell: bash
         run: |
           engine_dir="$GITHUB_WORKSPACE/sglang-complete"
-          engine=14624e954902bf2bed035631ed936c51701cec85
-          engine_tree=9239529a6db5c4451e3dfd9b4992aa156a794f75
-          serving_patches=643950b851990f2671ea40c3a1b574ceff98e3d2
-          serving_patches_tree=4553fe0871809baa3250dcbf40b11be00acb7518
+          engine=ff72db0da9a57ed77ed36b18d9ef260d00ec886f
+          engine_tree=ce83c7d2050d250b6cab2a1cd6a9a5282474d1c4
+          serving_patches=2a47f147d77310592a40712c07fe06559f0fe9fd
+          serving_patches_tree=48b8939032a0a66a76587b65165bee6ba23155f6
           test "$(git -C "$engine_dir" rev-parse HEAD)" = "$engine"
           test "$(git -C "$engine_dir" rev-parse HEAD^{tree})" = "$engine_tree"
           test "$(git -C "$GITHUB_WORKSPACE/serving-patches" rev-parse HEAD)" = "$serving_patches"
@@ -114,7 +114,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          export PYTHONPATH="$GITHUB_WORKSPACE/sglang-complete/python:$GITHUB_WORKSPACE/python"
+          export PYTHONPATH="$GITHUB_WORKSPACE/sglang-complete/test/registered/unit/entrypoints/openai:$GITHUB_WORKSPACE/sglang-complete/python:$GITHUB_WORKSPACE/python"
           export PIG_GOVERNOR_LIBRARY="$GITHUB_WORKSPACE/.artifacts/libpig_governor_core.so"
           python - <<'PY'
           import os
