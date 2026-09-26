@@ -421,6 +421,7 @@ impl State {
         Ok(())
     }
 
+    #[cfg(test)]
     fn observe(&mut self, now: f64, delta: u64, active_after: u64) -> Result<()> {
         // Keep the public observer transactional: a rejected update must not
         // advance the clock or partially append evidence.
@@ -456,7 +457,7 @@ impl State {
         Ok(())
     }
 
-    fn observe_batch(
+    fn observe_batch_in_place(
         &mut self,
         now: f64,
         delta: u64,
@@ -475,18 +476,39 @@ impl State {
             return Err(INVALID);
         }
 
-        let mut next = self.clone();
-        let active_before = next.active;
-        next.advance(now)?;
-        let cell = next
+        let active_before = self.active;
+        self.advance(now)?;
+        let cell = self
             .surface
             .entry((concurrency, pressure_class))
             .or_insert_with(SurfaceCell::new);
         cell.observe(now, delta, sequence_seconds)?;
-        next.record_tokens(now, delta)?;
-        next.update_active_run(active_before, active_after, now, delta)?;
-        next.active = active_after;
-        next.observed = true;
+        self.record_tokens(now, delta)?;
+        self.update_active_run(active_before, active_after, now, delta)?;
+        self.active = active_after;
+        self.observed = true;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn observe_batch(
+        &mut self,
+        now: f64,
+        delta: u64,
+        sequence_seconds: f64,
+        concurrency: u32,
+        pressure_class: u32,
+        active_after: u64,
+    ) -> Result<()> {
+        let mut next = self.clone();
+        next.observe_batch_in_place(
+            now,
+            delta,
+            sequence_seconds,
+            concurrency,
+            pressure_class,
+            active_after,
+        )?;
         *self = next;
         Ok(())
     }
@@ -494,7 +516,7 @@ impl State {
     // The caller owns request identities and signals that every old request
     // retired. Preserve public history and surface cells, but exclude all
     // retiring-set evidence from the newly active set's private live bound.
-    fn observe_replacement(
+    fn observe_replacement_in_place(
         &mut self,
         now: f64,
         delta: u64,
@@ -512,9 +534,8 @@ impl State {
         {
             return Err(INVALID);
         }
-        let mut next = self.clone();
         if sequence_seconds > 0.0 {
-            next.observe_batch(
+            self.observe_batch_in_place(
                 now,
                 delta,
                 sequence_seconds,
@@ -523,10 +544,32 @@ impl State {
                 active_after,
             )?;
         } else {
-            next.observe_in_place(now, 0, active_after)?;
+            self.observe_in_place(now, 0, active_after)?;
         }
-        next.active_run_buckets = [EMPTY; BUCKETS];
-        next.active_run_has_tokens = false;
+        self.active_run_buckets = [EMPTY; BUCKETS];
+        self.active_run_has_tokens = false;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn observe_replacement(
+        &mut self,
+        now: f64,
+        delta: u64,
+        sequence_seconds: f64,
+        concurrency: u32,
+        pressure_class: u32,
+        active_after: u64,
+    ) -> Result<()> {
+        let mut next = self.clone();
+        next.observe_replacement_in_place(
+            now,
+            delta,
+            sequence_seconds,
+            concurrency,
+            pressure_class,
+            active_after,
+        )?;
         *self = next;
         Ok(())
     }
@@ -581,7 +624,11 @@ impl State {
 
     fn bound_for_key(&self, now: f64, key: (u32, u32)) -> Result<Option<SurfaceBound>> {
         let (live, live_qualified, last_live_at) = match self.surface.get(&key) {
-            Some(cell) => (cell.admission_bound(now)?, cell.qualified(now)?, cell.last_time),
+            Some(cell) => (
+                cell.admission_bound(now)?,
+                cell.qualified(now)?,
+                cell.last_time,
+            ),
             None => (None, false, None),
         };
         let prior = if self.prior_active(now) {
@@ -1016,7 +1063,11 @@ pub unsafe extern "C" fn pig_governor_observe(
     delta: u64,
     active_after: u64,
 ) -> i32 {
-    guarded(|| transaction(handle, |state| state.observe(now, delta, active_after)))
+    guarded(|| {
+        transaction(handle, |state| {
+            state.observe_in_place(now, delta, active_after)
+        })
+    })
 }
 
 #[no_mangle]
@@ -1047,7 +1098,7 @@ pub unsafe extern "C" fn pig_governor_observe_batch(
 ) -> i32 {
     guarded(|| {
         transaction(handle, |state| {
-            state.observe_batch(
+            state.observe_batch_in_place(
                 now,
                 delta,
                 sequence_seconds,
@@ -1071,8 +1122,14 @@ pub unsafe extern "C" fn pig_governor_observe_replacement(
 ) -> i32 {
     guarded(|| {
         transaction(handle, |state| {
-            state.observe_replacement(now, delta, sequence_seconds, concurrency,
-                                      pressure_class, active_after)
+            state.observe_replacement_in_place(
+                now,
+                delta,
+                sequence_seconds,
+                concurrency,
+                pressure_class,
+                active_after,
+            )
         })
     })
 }
@@ -1465,7 +1522,8 @@ mod tests {
             let revision = s.revision;
             let now = 1.0 + duration;
             let delta = if duration > 0.0 { 10 } else { 0 };
-            s.observe_replacement(now, delta, duration, 1, 0, 1).unwrap();
+            s.observe_replacement(now, delta, duration, 1, 0, 1)
+                .unwrap();
             assert_eq!(s.revision, revision);
             assert_eq!(s.snapshot(now).unwrap().tokens_60s, 1000 + delta);
             assert_eq!(s.admission(now, 1, 0).unwrap().allowed, 1);
@@ -1492,8 +1550,10 @@ mod tests {
             (2.0, 1, 1.0, 1, 0, 5),
             (2.0, u64::MAX, 1.0, 1, 0, 1),
         ] {
-            assert_eq!(s.observe_replacement(now, delta, duration, concurrency,
-                                             pressure, active), Err(INVALID));
+            assert_eq!(
+                s.observe_replacement(now, delta, duration, concurrency, pressure, active),
+                Err(INVALID)
+            );
             assert_eq!(format!("{:?}", s), before);
         }
     }
@@ -1550,7 +1610,10 @@ mod tests {
         let mut s = State::new_with_profile(50.0, 43, 0.0, 120.0, &cells).unwrap();
         s.observe(0.0, 0, 1).unwrap();
         s.observe_batch(0.05, 1, 0.05, 1, 0, 1).unwrap();
-        assert_eq!(s.admission(0.05, 2, 0).unwrap().reason, ADMISSION_COLD_PRIOR);
+        assert_eq!(
+            s.admission(0.05, 2, 0).unwrap().reason,
+            ADMISSION_COLD_PRIOR
+        );
         let qualified_slow = s.admission(0.1, 2, 0).unwrap();
         assert_eq!(qualified_slow.allowed, 0);
         assert_eq!(qualified_slow.reason, ADMISSION_AGGREGATE_TPS_RISK);
@@ -1763,14 +1826,20 @@ mod tests {
         skipped.observe(2.5, 1200, 37).unwrap();
         skipped.observe(3.0, 1200, 37).unwrap();
         skipped.observe(4.1, 2200, 37).unwrap();
-        assert_eq!(skipped.admission(4.1, 39, 2).unwrap().reason, ADMISSION_TPS_RISK);
+        assert_eq!(
+            skipped.admission(4.1, 39, 2).unwrap().reason,
+            ADMISSION_TPS_RISK
+        );
 
         let mut expired = State::new_with_profile(50.0, 43, 1.0, 3.0, &cells).unwrap();
         expired.observe_batch(2.0, 0, 0.5, 39, 2, 38).unwrap();
         expired.observe(2.5, 1200, 38).unwrap();
         expired.observe(3.0, 1200, 38).unwrap();
         expired.observe(4.1, 2200, 38).unwrap();
-        assert_eq!(expired.admission(4.1, 39, 2).unwrap().reason, ADMISSION_TPS_RISK);
+        assert_eq!(
+            expired.admission(4.1, 39, 2).unwrap().reason,
+            ADMISSION_TPS_RISK
+        );
     }
 
     #[test]
@@ -1934,6 +2003,17 @@ mod tests {
             assert_eq!(pig_governor_admit(h, 1.0, 1, 0, &mut admission), OK);
             assert_eq!(admission.abi_version, ABI_VERSION);
             assert_eq!(pig_governor_observe_surface(h, 1.0, 10, 1.0, 1, 0), OK);
+            // These fail after clock advancement and surface mutation inside
+            // the transaction. None may publish the partial state.
+            assert_eq!(pig_governor_observe(h, 2.0, u64::MAX, 1), INVALID);
+            assert_eq!(
+                pig_governor_observe_batch(h, 2.0, u64::MAX, 1.0, 1, 0, 1),
+                INVALID
+            );
+            assert_eq!(
+                pig_governor_observe_replacement(h, 2.0, u64::MAX, 1.0, 1, 0, 1),
+                INVALID
+            );
             assert_eq!(
                 pig_governor_observe_batch(h, 2.0, 10, 1.0, 5, 0, 1),
                 INVALID
