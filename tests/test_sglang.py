@@ -106,7 +106,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(snapshot['attempts'], 1)
         self.assertEqual(snapshot['rejects'], 1)
         self.assertEqual(snapshot['reject_reasons'], {'waiting_limit': 1})
-        self.assertEqual(snapshot['waiting_count'], 3)
+        self.assertEqual(snapshot['waiting_count'], 0)
+        self.assertEqual(snapshot['last_waiting_count'], 3)
         self.assertEqual(snapshot['projected_waiting'], 4)
         self.assertEqual(snapshot['outstanding'], 0)
 
@@ -122,7 +123,25 @@ class IntegrationTests(unittest.TestCase):
         snapshot = self.adapter.admission_snapshot()
         self.assertEqual(snapshot['outstanding'], 0)
         self.assertEqual(snapshot['active'], 0)
-        self.assertEqual(snapshot['waiting_count'], 1)
+        self.assertEqual(snapshot['waiting_count'], 0)
+        self.assertEqual(snapshot['last_waiting_count'], 1)
+
+    def test_waiting_snapshot_requires_live_native_count_while_outstanding(self):
+        req = SimpleNamespace(
+            rid='still-owned',
+            origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+        )
+        self.assertTrue(self.adapter.admit_request(req, 0, waiting_count=1)['allowed'])
+        self.assertIsNone(self.adapter.admission_snapshot()['waiting_count'])
+        self.assertEqual(self.adapter.admission_snapshot(waiting_count=1)['waiting_count'], 1)
+        self.assertEqual(self.adapter.admission_snapshot(waiting_count=0)['waiting_count'], 0)
+        with self.assertRaises(ValueError):
+            self.adapter.admission_snapshot(waiting_count=-1)
+        with self.assertRaises(ValueError):
+            self.adapter.admission_snapshot(waiting_count=True)
+        self.assertTrue(self.adapter.release_request(req))
+        self.assertEqual(self.adapter.admission_snapshot()['waiting_count'], 0)
 
     def test_aggregate_live_rejection_is_counted_without_reservation(self):
         core = Governor(

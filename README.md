@@ -40,7 +40,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.4` uses C ABI v4. Production runtime configuration binds a
+Component `0.2.5` uses C ABI v4. Production runtime configuration binds a
 frozen response-surface profile to the exact composed engine, Governor source,
 model artifact, hardware class and resolved SGLang settings:
 
@@ -55,6 +55,11 @@ PIG_GOVERNOR_COMMIT=<40 lowercase hex characters>
 PIG_MODEL_ARTIFACT_ID=sha256:<64 lowercase hex characters>
 PIG_RUNTIME_HARDWARE_ID=h200-sxm-tp1-v1
 ```
+
+`pig_governor_admission.waiting_count` is the live native waiting-owner count
+when supplied by the Scheduler. Without a native sample it is `0` only after
+all Governor reservations drain, and otherwise `null`. The separate
+`last_waiting_count` is the most recent admission sample, not a live queue size.
 
 With a positive reference, both profile variables are required and the profile
 must be unexpired and cover every reachable response-surface cell through exact

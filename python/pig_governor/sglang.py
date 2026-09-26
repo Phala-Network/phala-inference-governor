@@ -152,8 +152,18 @@ class SglangGovernor(SchedulerGovernor):
             self.last_admission = result
             return result
 
-    def admission_snapshot(self):
+    def admission_snapshot(self, *, waiting_count=None):
+        """Report the live native queue when supplied by the Scheduler."""
         with self._policy_lock:
+            if waiting_count is not None and (
+                type(waiting_count) is not int or not 0 <= waiting_count < 2**32
+            ):
+                raise ValueError("Invalid waiting_count")
+            # Without a native queue sample, only a fully drained owner has a
+            # known current waiting count. Keep the prior sample separately.
+            current_waiting = waiting_count
+            if current_waiting is None and self.outstanding == 0:
+                current_waiting = 0
             return {
                 "attempts": self.admission_attempts,
                 "rejects": self.admission_rejects,
@@ -161,7 +171,8 @@ class SglangGovernor(SchedulerGovernor):
                 "reject_reasons": dict(self.admission_reject_reasons),
                 "outstanding": self.outstanding,
                 "active": self.active,
-                "waiting_count": self.last_waiting_count,
+                "waiting_count": current_waiting,
+                "last_waiting_count": self.last_waiting_count,
                 "projected_waiting": (
                     None
                     if self.last_admission is None
