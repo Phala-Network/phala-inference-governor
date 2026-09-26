@@ -92,6 +92,34 @@ def request(rid, input_tokens=16, max_new_tokens=16):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_duplicate_progress_in_batch_does_not_change_accounting(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        progress = Progress()
+
+        with self.assertRaisesRegex(ValueError, "Duplicate Governor Progress"):
+            adapter.commit_batch(
+                [(progress, 1, False, 0), (progress, 1, False, 0)], 1
+            )
+
+        self.assertEqual(core.rows, [])
+        self.assertEqual(adapter.active, 0)
+        self.assertEqual(adapter.active_pressure_counts, [0, 0, 0, 0])
+        self.assertEqual(progress.output_tokens, 0)
+
+    def test_pressure_class_mismatch_does_not_change_accounting(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        progress = Progress(pressure_class=1)
+
+        with self.assertRaisesRegex(ValueError, "pressure class changed"):
+            adapter.commit_batch([(progress, 1, False, 0)], 1)
+
+        self.assertEqual(core.rows, [])
+        self.assertEqual(adapter.active, 0)
+        self.assertEqual(adapter.active_pressure_counts, [0, 0, 0, 0])
+        self.assertEqual(progress.output_tokens, 0)
+
     def test_batch_commit_serializes_policy_snapshot(self):
         core = BlockingObserveCore()
         adapter = SchedulerGovernor(core)
@@ -583,6 +611,21 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(adapter.release_request(req))
         self.assertFalse(adapter.release_request(req))
         self.assertEqual(adapter.outstanding, 0)
+
+    def test_foreign_reservation_cannot_bypass_owner_admission(self):
+        first = SchedulerGovernor(Core(), max_running_requests=4)
+        second_core = Core()
+        second = SchedulerGovernor(second_core, max_running_requests=4)
+        req = request("foreign")
+        self.assertTrue(first.admit_request(req, 1)["allowed"])
+
+        with self.assertRaisesRegex(RuntimeError, "different Governor owner"):
+            second.admit_request(req, 2)
+
+        self.assertEqual(first.outstanding, 1)
+        self.assertEqual(second.outstanding, 0)
+        self.assertEqual(second_core.rows, [])
+        self.assertTrue(first.release_request(req))
 
     def test_candidate_context_changes_pressure_class_from_admitted_ledger(self):
         core = Core()

@@ -179,6 +179,7 @@ class NativeRunningPolicyTests(unittest.TestCase):
         adder.rem_chunk_tokens = 8
         adder.is_hybrid_swa = False
         adder.page_size = 1
+        adder.token_to_kv_pool_allocator = NS(page_size=1)
         adder.prefill_delayer_single_pass = Mock()
         adder.prefill_delayer_single_pass.negotiate_should_allow_prefill.return_value = False
         adder.running_batch = Mock()

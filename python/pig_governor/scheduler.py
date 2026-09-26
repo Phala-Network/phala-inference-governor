@@ -114,6 +114,8 @@ class SchedulerGovernor:
         with self._policy_lock:
             reservation = getattr(req, "governor_reservation", None)
             if reservation is not None:
+                if reservation.owner is not self:
+                    raise RuntimeError("Request belongs to a different Governor owner")
                 if reservation.released:
                     raise RuntimeError("Released Governor reservation cannot be reused")
                 return reservation.decision
@@ -248,16 +250,22 @@ class SchedulerGovernor:
         total_delta = 0
         entering_delta = 0
         proposed = []
+        seen_progress_ids = set()
 
         for progress, output_tokens, terminal, pressure_class in updates:
             if not isinstance(progress, Progress):
                 raise ValueError("Expected Governor Progress")
+            if id(progress) in seen_progress_ids:
+                raise ValueError("Duplicate Governor Progress in batch")
+            seen_progress_ids.add(id(progress))
             if type(output_tokens) is not int or output_tokens < 0:
                 raise ValueError("Invalid committed output length")
             if type(terminal) is not bool:
                 raise ValueError("Terminal flag must be boolean")
             if type(pressure_class) is not int or not 0 <= pressure_class < 4:
                 raise ValueError("Invalid context-pressure class")
+            if pressure_class != progress.pressure_class:
+                raise ValueError("Governor Progress pressure class changed")
             if progress.terminal:
                 continue
             if output_tokens < progress.output_tokens:
