@@ -97,14 +97,17 @@ class TokenizerAdmissionMappingTests(unittest.IsolatedAsyncioTestCase):
         for is_stream in (False, True):
             with self.subTest(is_stream=is_stream):
                 manager, state = self._tokenizer_manager_and_state()
-                with self.assertRaises(HTTPException) as raised:
-                    await manager._handle_abort_finish_reason(
-                        self._abort_output(HTTPStatus.TOO_MANY_REQUESTS),
-                        state,
-                        is_stream,
+                output = self._abort_output(HTTPStatus.TOO_MANY_REQUESTS)
+                if is_stream:
+                    self.assertIs(
+                        await manager._handle_abort_finish_reason(output, state, True),
+                        output,
                     )
-                self.assertEqual(raised.exception.status_code, 429)
-                self.assertEqual(raised.exception.detail, ADMISSION_MESSAGE)
+                else:
+                    with self.assertRaises(HTTPException) as raised:
+                        await manager._handle_abort_finish_reason(output, state, False)
+                    self.assertEqual(raised.exception.status_code, 429)
+                    self.assertEqual(raised.exception.detail, ADMISSION_MESSAGE)
                 self.assertNotIn("rid", manager.rid_to_state)
 
     async def test_existing_streaming_503_remains_an_error_chunk(self):
@@ -121,6 +124,7 @@ class ActualOpenAIServingFirstResultTests(unittest.IsolatedAsyncioTestCase):
         serving = object.__new__(serving_class)
         serving.tokenizer_manager = manager
         serving.allowed_custom_labels = None
+        serving.chat_encoding_spec = None
         serving._validate_request = lambda _request: None
         serving._convert_to_internal_request = (
             lambda request, raw_request=None: (
@@ -255,16 +259,14 @@ class AdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
                             response.headers.get("content-type"), "text/event-stream"
                         )
                         body = response.json()
-                        self.assertEqual(set(body), {"error"})
-                        error = body["error"]
-                        self.assertIsInstance(error, dict)
-                        self.assertTrue({"message", "type", "param", "code"} <= set(error))
-                        if "object" in error:
-                            self.assertEqual(error["object"], "error")
-                        self.assertEqual(error["message"], message)
-                        self.assertEqual(error["type"], "429")
-                        self.assertIsNone(error["param"])
-                        self.assertEqual(error["code"], 429)
+                        self.assertEqual(
+                            set(body), {"object", "message", "type", "param", "code"}
+                        )
+                        self.assertEqual(body["object"], "error")
+                        self.assertEqual(body["message"], message)
+                        self.assertEqual(body["type"], "429")
+                        self.assertIsNone(body["param"])
+                        self.assertEqual(body["code"], 429)
 
             for stream in (False, True):
                 with self.subTest(path="/v1/responses", stream=stream, message=message):
