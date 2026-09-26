@@ -110,6 +110,20 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(snapshot['projected_waiting'], 4)
         self.assertEqual(snapshot['outstanding'], 0)
 
+    def test_waiting_sample_is_historical_after_reservations_drain(self):
+        req = SimpleNamespace(
+            rid='queued-then-finished',
+            origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+        )
+        self.assertTrue(self.adapter.admit_request(req, 0, waiting_count=1)['allowed'])
+        self.assertTrue(self.adapter.release_request(req))
+
+        snapshot = self.adapter.admission_snapshot()
+        self.assertEqual(snapshot['outstanding'], 0)
+        self.assertEqual(snapshot['active'], 0)
+        self.assertEqual(snapshot['waiting_count'], 1)
+
     def test_aggregate_live_rejection_is_counted_without_reservation(self):
         core = Governor(
             50,
