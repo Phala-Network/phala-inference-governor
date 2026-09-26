@@ -75,14 +75,14 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang
-          ref: bcc1a65d3e5725aa071292650a9dff01bde07169
+          ref: c9c6c824e5a607b94260c29f137a8c822f65aaad
           path: sglang-complete
           persist-credentials: false
       - name: Checkout compatible serving patches
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang-serving-patches
-          ref: 45cded342e046f8e0bec7fad10dd97da75a9732e
+          ref: 3a0f049cb287f0c3ec4f2d9fb56c31cbc5fda825
           path: serving-patches
           persist-credentials: false
       - uses: actions/download-artifact@v4
@@ -93,10 +93,10 @@ jobs:
         shell: bash
         run: |
           engine_dir="$GITHUB_WORKSPACE/sglang-complete"
-          engine=bcc1a65d3e5725aa071292650a9dff01bde07169
-          engine_tree=d41d27767148204e7d9d373cd38719a889cc77c3
-          serving_patches=45cded342e046f8e0bec7fad10dd97da75a9732e
-          serving_patches_tree=2c90b357ac4f483564fbcc4f78673b054099497c
+          engine=c9c6c824e5a607b94260c29f137a8c822f65aaad
+          engine_tree=837df64283dae3e8d5d471b8b2e6f7f35d95a4dc
+          serving_patches=3a0f049cb287f0c3ec4f2d9fb56c31cbc5fda825
+          serving_patches_tree=923acaa59566901271efc57875db0bd3ad32ba5a
           test "$(git -C "$engine_dir" rev-parse HEAD)" = "$engine"
           test "$(git -C "$engine_dir" rev-parse HEAD^{tree})" = "$engine_tree"
           test "$(git -C "$GITHUB_WORKSPACE/serving-patches" rev-parse HEAD)" = "$serving_patches"
