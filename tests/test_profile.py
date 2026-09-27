@@ -212,15 +212,16 @@ class ProfileTests(unittest.TestCase):
             canonical_profile_bytes({"value": math.nan})
 
     def test_export_bytes_hash_load_roundtrip(self):
+        created = datetime.now(timezone.utc)
         document = build_profile_document(
-            self.identity, 2, [flat_cell()], created_at="2026-09-20T00:00:00Z"
+            self.identity, 2, [flat_cell()], created_at=created
         )
         data = canonical_profile_bytes(document)
         digest = hashlib.sha256(data).hexdigest()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "profile.json")
             path.write_bytes(data)
-            loaded = load_profile(path, digest, self.identity, 2, NOW)
+            loaded = load_profile(path, digest, self.identity, 2, created)
         self.assertEqual(loaded.document, document)
         self.assertEqual(loaded.sha256, digest)
         self.assertEqual(loaded.missing, ())
