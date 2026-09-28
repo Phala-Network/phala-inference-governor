@@ -249,20 +249,17 @@ class ProfileTests(unittest.TestCase):
 
     def test_bootstrap_reference_zero_and_positive_policy(self):
         self.assertIsNone(bootstrap_profile(0, self.identity, 2, {}, NOW))
+        self.assertIsNone(bootstrap_profile(
+            50, self.identity, 2,
+            {PROFILE_PATH_ENV: "", PROFILE_SHA256_ENV: ""}, NOW,
+        ))
         for environment in (
             {PROFILE_PATH_ENV: "profile.json"},
             {PROFILE_SHA256_ENV: "0" * 64},
+            {PROFILE_PATH_ENV: "profile.json", PROFILE_SHA256_ENV: ""},
         ):
             with self.subTest(environment=environment), self.assertRaisesRegex(ValueError, "together"):
                 bootstrap_profile(0, self.identity, 2, environment, NOW)
-        with self.assertRaisesRegex(ValueError, "non-empty"):
-            bootstrap_profile(
-                0,
-                self.identity,
-                2,
-                {PROFILE_PATH_ENV: "", PROFILE_SHA256_ENV: ""},
-                NOW,
-            )
         self.assertIsNone(bootstrap_profile(50, self.identity, 2, {}, NOW))
 
         with tempfile.TemporaryDirectory() as directory:

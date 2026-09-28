@@ -417,9 +417,11 @@ def bootstrap_profile(
     reference_value = _number(reference, "reference")
     path = environ.get(PROFILE_PATH_ENV)
     digest = environ.get(PROFILE_SHA256_ENV)
-    if (path is None) != (digest is None):
+    path_configured = path not in (None, "")
+    digest_configured = digest not in (None, "")
+    if path_configured != digest_configured:
         raise ValueError(f"{PROFILE_PATH_ENV} and {PROFILE_SHA256_ENV} must be configured together")
-    if path is None:
+    if not path_configured:
         return None
     if type(path) is not str or not path or type(digest) is not str or not digest:
         raise ValueError("TPS profile path and sha256 must be non-empty strings")

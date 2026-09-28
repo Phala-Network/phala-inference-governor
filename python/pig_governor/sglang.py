@@ -13,7 +13,7 @@ from sglang.srt.runtime_context import (
     get_parallel,
     get_schedule,
 )
-from .core import Governor
+from .core import Governor, RevisionConflict
 from .identity import (
     IDENTITY_SCHEMA, RESOLVED_RUNTIME_FIELDS, build_online_runtime_identity,
     build_runtime_identity,
@@ -68,10 +68,13 @@ def create(server_args, *, runtime_overrides=None, is_generation=None):
     if max_running_requests is None:
         raise ValueError("Governor requires resolved native max_running_requests")
     overrides["max_running_requests"] = max_running_requests
-    profile_configured = (
-        "PIG_TPS_PROFILE_PATH" in os.environ
-        or "PIG_TPS_PROFILE_SHA256" in os.environ
-    )
+    profile_path = os.environ.get("PIG_TPS_PROFILE_PATH")
+    profile_digest = os.environ.get("PIG_TPS_PROFILE_SHA256")
+    if bool(profile_path) != bool(profile_digest):
+        raise ValueError(
+            "PIG_TPS_PROFILE_PATH and PIG_TPS_PROFILE_SHA256 must be configured together"
+        )
+    profile_configured = bool(profile_path)
     engine_version = None
     if not profile_configured:
         try:
@@ -143,6 +146,7 @@ class SglangGovernor(SchedulerGovernor):
         self.admission_reuses = 0
         self.admission_reject_reasons = {}
         self.last_admission = None
+        self._pending_runtime_identity = None
 
     def admit_request(self, req, now, *, is_retracted=False, waiting_count=None):
         with self._policy_lock:
@@ -221,11 +225,22 @@ class SglangGovernor(SchedulerGovernor):
             if self._identity_provider is None:
                 return False
             current = self._identity_provider()
-            if current == self.runtime_identity:
+            if self._admission_paused:
+                self._pending_runtime_identity = current
+                if self.outstanding or self.active:
+                    return False
+            elif current == self.runtime_identity:
+                return False
+            elif self.outstanding or self.active:
+                self._admission_paused = True
+                self._pending_runtime_identity = current
+                self.last_admission = None
                 return False
             previous = self.runtime_identity
             self.core.rotate_surface_epoch(now, self.active)
             self.runtime_identity = current
+            self._admission_paused = False
+            self._pending_runtime_identity = None
             self.loaded_profile = None
             self._pending_evidence = {}
             self._surface_time = now
@@ -243,6 +258,16 @@ class SglangGovernor(SchedulerGovernor):
             self.refresh_identity(now)
             snapshot = super().policy_snapshot(now)
             snapshot["runtime_identity"] = self.runtime_identity
+            snapshot["identity_transition"] = (
+                None if not self._admission_paused else {
+                    "pending": True,
+                    "pending_runtime_identity_sha256": (
+                        self._pending_runtime_identity["sha256"]
+                    ),
+                    "outstanding": self.outstanding,
+                    "active_decode_sequences": self.active,
+                }
+            )
             snapshot["profile_bootstrap"] = {
                 "loaded": self.loaded_profile is not None,
                 "sha256": (
@@ -274,6 +299,8 @@ class SglangGovernor(SchedulerGovernor):
     def update_policy(self, now, *, expected_epoch, expected_revision, **changes):
         with self._policy_lock:
             self.refresh_identity(now)
+            if self._admission_paused:
+                raise RevisionConflict("Runtime identity transition is draining")
             return super().update_policy(
                 now,
                 expected_epoch=expected_epoch,
@@ -284,6 +311,8 @@ class SglangGovernor(SchedulerGovernor):
     def profile_snapshot(self, now):
         with self._policy_lock:
             self.refresh_identity(now)
+            if self._admission_paused:
+                return None
             if self.runtime_identity is None:
                 raise RuntimeError("Governor runtime identity is unavailable")
             cells = self.core.export_profile(now)

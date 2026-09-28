@@ -40,7 +40,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.6` uses C ABI v4. Online learning starts with the resolved
+Component `0.2.7` uses C ABI v4. Online learning starts with the resolved
 SGLang settings and a positive TPS reference; it does not need a precomputed
 model profile or manually supplied artifact/hardware identifiers:
 
@@ -53,7 +53,9 @@ PIG_TPS_REFERENCE=50
 An existing v1 response-surface profile may be supplied with both
 `PIG_TPS_PROFILE_PATH` and `PIG_TPS_PROFILE_SHA256` as an optional startup prior.
 That explicit path retains strict commit, artifact, hardware, predictor, expiry,
-SHA-256 and resolved-runtime validation. Missing profile cells are learned online.
+SHA-256 and resolved-runtime validation. Two absent or empty profile variables
+select online mode; a non-empty path/hash must be supplied together. Missing
+profile cells are learned online.
 
 `pig_governor_admission.waiting_count` is the live native waiting-owner count
 when supplied by the Scheduler. Without a native sample it is `0` only after
@@ -63,15 +65,18 @@ all Governor reservations drain, and otherwise `null`. The separate
 Without a profile, the online identity records the complete resolved runtime,
 available version/commit/artifact/hardware fields, and a hash of the model
 locator when available. Missing fields remain null; no artifact digest or
-hardware slug is invented. Identity changes clear prior and live evidence and
-rotate the CAS epoch. With an optional v1 profile, static fields still match
+hardware slug is invented. If identity changes while old requests remain,
+Governor rejects new admissions and profile export until those reservations
+drain; it then clears old evidence and rotates the CAS epoch before learning
+under the new identity. With an optional v1 profile, static fields still match
 exactly; probed `runtime.max_total_tokens` may increase but not decrease.
 
 Unknown response-surface cells use bounded exploration: at most one exploratory
 reservation is active, starts are at least two seconds apart, and exploration
 requires zero native waiting owners and stays within `max_running`. Concurrency
 expands one cell at a time only when the adjacent lighter cell has qualified
-evidence at least 1.25 times the reference. A lone request can periodically
+live evidence at least 1.25 times the reference; a prior alone cannot authorize
+expansion. A lone request can periodically
 reprobe after insufficient or stale evidence. Once a cell has qualified data,
 its forecast decides admission; measured TPS below the reference rejects with
 429. `PIG_TPS_REFERENCE=0` remains an explicit unrestricted sampling mode.
@@ -159,7 +164,7 @@ See [development acceptance](docs/validation/DEV_V0520_ACCEPTANCE.md) for exact
 runtime identity, retained failed probes and evidence boundaries. Strict dynamic
 platform policy failed; launch/model measurement coverage remains unproven.
 Final-image verification, reproducible image publication and the authorized
-production test remain pending. Package version 0.2.6 identifies the online
+production test remain pending. Package version 0.2.7 identifies the online
 learning source candidate with unchanged ABI v4; it does not claim those release
 gates have passed.
 Historical v0.1.0 tags, the 0.1.1 source state and mixed-source image evidence

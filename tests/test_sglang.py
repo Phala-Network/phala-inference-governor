@@ -6,7 +6,10 @@ import time
 import unittest
 from types import SimpleNamespace
 from pig_governor import Governor
-from pig_governor.identity import RESOLVED_RUNTIME_FIELDS, build_runtime_identity
+from pig_governor.core import RevisionConflict
+from pig_governor.identity import (
+    RESOLVED_RUNTIME_FIELDS, build_online_runtime_identity, build_runtime_identity,
+)
 from pig_governor.profile import build_profile_document, canonical_profile_bytes
 from pig_governor.scheduler import Progress, SchedulerGovernor
 from pig_governor.sglang import SglangGovernor, create, on_abort_emitted
@@ -500,6 +503,31 @@ class IntegrationTests(unittest.TestCase):
             self.assertIsNone(exported['profile'])
             self.assertEqual(exported['availability'], 'online_identity')
 
+    def test_empty_profile_environment_is_online_mode(self):
+        parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
+        schedule = SimpleNamespace(disable_overlap_schedule=True, max_running_requests=2)
+        disagg = SimpleNamespace(disaggregation_mode='null')
+        context = SimpleNamespace(
+            resolved_server_args_dict=lambda: resolved_runtime(max_running_requests=2)
+        )
+        environment = {
+            'PIG_GOVERNOR_ENABLE': '1',
+            'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
+            'PIG_TPS_REFERENCE': '50',
+            'PIG_TPS_PROFILE_PATH': '',
+            'PIG_TPS_PROFILE_SHA256': '',
+        }
+        with patch.dict('pig_governor.sglang.os.environ', environment, clear=True), \
+             patch('pig_governor.sglang.get_parallel', return_value=parallel), \
+             patch('pig_governor.sglang.get_schedule', return_value=schedule), \
+             patch('pig_governor.sglang.get_disagg', return_value=disagg), \
+             patch('pig_governor.sglang.get_context', return_value=context):
+            adapter = create(SimpleNamespace(model_path='model'), is_generation=True)
+        self.addCleanup(adapter.core.close)
+        self.assertIsNone(adapter.loaded_profile)
+        self.assertEqual(adapter.runtime_identity['schema'],
+                         'phala.pig.online-runtime-identity.v1')
+
     def test_online_exploration_is_bounded_and_learned_risk_rejects(self):
         core = Governor(50, max_running_requests=3)
         self.addCleanup(core.close)
@@ -542,6 +570,30 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue(adapter.release_request(fit))
         self.assertEqual(adapter.outstanding, 0)
         self.assertEqual(adapter.admitted_pressure_counts, [0, 0, 0, 0])
+
+    def test_prior_only_lower_cell_does_not_authorize_higher_exploration(self):
+        core = Governor(
+            50, max_running_requests=2,
+            profile_cells=[{
+                'concurrency': 1, 'pressure_class': 0,
+                'long_tokens': 100, 'long_seconds': 1.0,
+                'short_tokens': 100, 'short_seconds': 1.0,
+                'evidence_lower_tps': 100.0,
+            }], profile_ttl_seconds=120, now=0,
+        )
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(core, max_running_requests=2)
+        def req(rid):
+            return SimpleNamespace(rid=rid, origin_input_ids=[1],
+                                   sampling_params=SimpleNamespace(max_new_tokens=1))
+        first = req('prior')
+        self.assertEqual(adapter.admit_request(first, 1, waiting_count=0)['reason'], 3)
+        second = req('higher')
+        decision = adapter.admit_request(second, 1, waiting_count=0)
+        self.assertFalse(decision['allowed'])
+        self.assertEqual(decision['reason'], 4)
+        self.assertFalse(hasattr(second, 'governor_reservation'))
+        self.assertTrue(adapter.release_request(first))
 
     def test_online_exploration_retries_after_cooldown_without_learning(self):
         core = Governor(50, max_running_requests=1)
@@ -718,6 +770,98 @@ class IntegrationTests(unittest.TestCase):
         policy = adapter.policy_snapshot(2)
         self.assertEqual(policy['mutable']['max_running'], 40)
         self.assertEqual(policy['mutable']['max_waiting'], 3)
+
+    def test_inflight_old_decode_cannot_populate_new_identity_surface(self):
+        state = resolved_runtime(weight_version='v0', max_running_requests=2)
+        def provider():
+            return build_online_runtime_identity(state, {}, model_locator='model')
+        core = Governor(50, max_running_requests=2)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(
+            core, max_running_requests=2,
+            runtime_identity=provider(), identity_provider=provider,
+        )
+        req = SimpleNamespace(
+            rid='old', origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=64),
+            output_ids_through_stop=[], finished_reason=None,
+            finished=lambda: False, to_finish=None,
+        )
+        self.assertEqual(adapter.admit_request(req, 0, waiting_count=0)['reason'], 7)
+        batch = SimpleNamespace(
+            reqs=[req], launch_ts=0,
+            forward_mode=SimpleNamespace(is_extend_without_speculative=lambda: False),
+        )
+        req.output_ids_through_stop = [1]
+        adapter.after_result(batch, 1)
+        old_epoch = core.epoch
+        old_identity = adapter.runtime_identity
+
+        state['weight_version'] = 'v1'
+        req.output_ids_through_stop = list(range(21))
+        adapter.after_result(batch, 2)
+        self.assertEqual(core.epoch, old_epoch)
+        self.assertEqual(adapter.runtime_identity, old_identity)
+        policy = adapter.policy_snapshot(2)
+        self.assertTrue(policy['identity_transition']['pending'])
+        with self.assertRaises(RevisionConflict):
+            adapter.update_policy(
+                2, expected_epoch=old_epoch,
+                expected_revision=policy['revision'], tps_reference=40,
+            )
+        self.assertIsNone(adapter.profile_snapshot(2))
+        newcomer = SimpleNamespace(
+            rid='new', origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+        )
+        blocked = adapter.admit_request(newcomer, 2, waiting_count=0)
+        self.assertEqual(blocked['reason_name'], 'identity_transition')
+        self.assertFalse(blocked['allowed'])
+        self.assertFalse(hasattr(newcomer, 'governor_reservation'))
+
+        req.finished = lambda: True
+        adapter.after_result(batch, 3)
+        self.assertEqual(adapter.outstanding, 0)
+        self.assertEqual(adapter.active, 0)
+        self.assertTrue(adapter.refresh_identity(3.1))
+        self.assertNotEqual(core.epoch, old_epoch)
+        self.assertEqual(adapter.runtime_identity['runtime']['weight_version'], 'v1')
+        self.assertEqual(core.snapshot(3.1)['decode_tokens'], 0)
+        self.assertEqual(core.export_profile(3.1), [])
+        self.assertIsNone(adapter.policy_snapshot(3.1)['identity_transition'])
+
+    def test_identity_transition_drains_aborted_request(self):
+        state = resolved_runtime(weight_version='v0', max_running_requests=1)
+        def provider():
+            return build_online_runtime_identity(state, {})
+        core = Governor(0, max_running_requests=1)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(
+            core, max_running_requests=1,
+            runtime_identity=provider(), identity_provider=provider,
+        )
+        req = SimpleNamespace(
+            rid='old', origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=64),
+            output_ids_through_stop=[1], finished_reason=None,
+            finished=lambda: False, to_finish=None,
+        )
+        self.assertTrue(adapter.admit_request(req, 0, waiting_count=0)['allowed'])
+        batch = SimpleNamespace(
+            reqs=[req], launch_ts=0,
+            forward_mode=SimpleNamespace(is_extend_without_speculative=lambda: False),
+        )
+        adapter.after_result(batch, 1)
+        old_epoch = core.epoch
+        state['weight_version'] = 'v1'
+        self.assertFalse(adapter.refresh_identity(2))
+        with patch('pig_governor.sglang.time.monotonic', return_value=3):
+            on_abort_emitted(req)
+            on_abort_emitted(req)
+        self.assertEqual((adapter.active, adapter.outstanding), (0, 0))
+        self.assertTrue(adapter.refresh_identity(3.1))
+        self.assertNotEqual(core.epoch, old_epoch)
+        self.assertEqual(core.snapshot(3.1)['decode_tokens'], 0)
 
     def test_profile_snapshot_is_an_epoch_guarded_loadable_envelope(self):
         identity = build_runtime_identity(resolved_runtime(), environ=IDENTITY_ENV)

@@ -11,6 +11,7 @@ import threading
 MAX_WAITING_LIMIT = 3
 ADMISSION_REASON_WAITING_LIMIT = 5
 ADMISSION_REASON_ONLINE_EXPLORATION = 7
+ADMISSION_REASON_IDENTITY_TRANSITION = 8
 EXPLORATION_INTERVAL_SECONDS = 2.0
 EXPLORATION_HEADROOM = 1.25
 ADMISSION_REASON_NAMES = {
@@ -22,6 +23,7 @@ ADMISSION_REASON_NAMES = {
     ADMISSION_REASON_WAITING_LIMIT: "waiting_limit",
     6: "aggregate_tps_risk",
     ADMISSION_REASON_ONLINE_EXPLORATION: "online_exploration",
+    ADMISSION_REASON_IDENTITY_TRANSITION: "identity_transition",
 }
 
 
@@ -80,6 +82,7 @@ class SchedulerGovernor:
         self.online_exploration = online_exploration
         self._exploration_active = False
         self._last_exploration_at = None
+        self._admission_paused = False
 
     def _exploration_allowed(self, now, projected_concurrency, pressure_class,
                              waiting_count, outstanding_after):
@@ -95,7 +98,8 @@ class SchedulerGovernor:
         if projected_concurrency != self.outstanding + 1:
             return False
         lower = self.core.admit(now, projected_concurrency - 1, pressure_class)
-        return (lower["allowed"] and lower["projected_tps"]
+        return (lower["allowed"] and lower.get("observed") is True
+                and lower["projected_tps"]
                 >= lower["reference"] * EXPLORATION_HEADROOM)
 
     @property
@@ -176,7 +180,12 @@ class SchedulerGovernor:
             decision = dict(
                 self.core.admit(now, projected_concurrency, projected_pressure)
             )
-            if (decision.get("reason") == 4
+            if self._admission_paused:
+                decision.update(
+                    allowed=False, reason=ADMISSION_REASON_IDENTITY_TRANSITION,
+                    evidence_source="none",
+                )
+            elif (decision.get("reason") == 4
                     and self._exploration_allowed(
                         now, projected_concurrency, projected_pressure,
                         waiting_count, outstanding_after,

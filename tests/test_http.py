@@ -510,6 +510,14 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(document(response), {"error": "profile_epoch_mismatch"})
         self.assertEqual(response.headers["cache-control"], "no-store")
 
+    async def test_profile_is_unavailable_during_identity_transition(self):
+        epoch = self.manager.profile["epoch"]
+        self.manager.profile = None
+        response = await self.profile(epoch=epoch)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(document(response), {"error": "governor_unavailable"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
     async def test_profile_rejects_malformed_scheduler_envelopes(self):
         base = copy.deepcopy(self.manager.profile)
         valid_epoch = base["epoch"]
