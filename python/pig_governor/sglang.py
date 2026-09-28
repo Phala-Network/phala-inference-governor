@@ -6,6 +6,7 @@ multi-rank decision broadcast needs its own verified adapter before enabling.
 """
 import os
 import time
+from importlib.metadata import PackageNotFoundError, version
 from sglang.srt.runtime_context import (
     get_context,
     get_disagg,
@@ -13,12 +14,16 @@ from sglang.srt.runtime_context import (
     get_schedule,
 )
 from .core import Governor
-from .identity import RESOLVED_RUNTIME_FIELDS, build_runtime_identity
+from .identity import (
+    IDENTITY_SCHEMA, RESOLVED_RUNTIME_FIELDS, build_online_runtime_identity,
+    build_runtime_identity,
+)
 from .profile import bootstrap_profile, build_profile_document, coverage
 from .scheduler import MAX_WAITING_LIMIT, Progress, SchedulerGovernor
 
 
-def _runtime_identity(runtime_overrides):
+def _runtime_identity(runtime_overrides, *, profile_configured=False,
+                      model_locator=None, engine_version=None):
     resolved = get_context().resolved_server_args_dict()
     resolved.update(runtime_overrides)
     try:
@@ -27,7 +32,11 @@ def _runtime_identity(runtime_overrides):
         raise ValueError(
             f"Resolved runtime identity is missing {error.args[0]}"
         ) from None
-    return build_runtime_identity(selected)
+    if profile_configured:
+        return build_runtime_identity(selected)
+    return build_online_runtime_identity(
+        selected, model_locator=model_locator, engine_version=engine_version
+    )
 
 
 def _policy_integer(name, default, *, minimum, maximum=2**32 - 1):
@@ -59,9 +68,23 @@ def create(server_args, *, runtime_overrides=None, is_generation=None):
     if max_running_requests is None:
         raise ValueError("Governor requires resolved native max_running_requests")
     overrides["max_running_requests"] = max_running_requests
+    profile_configured = (
+        "PIG_TPS_PROFILE_PATH" in os.environ
+        or "PIG_TPS_PROFILE_SHA256" in os.environ
+    )
+    engine_version = None
+    if not profile_configured:
+        try:
+            engine_version = version("sglang")
+        except PackageNotFoundError:
+            pass
 
     def identity_provider():
-        return _runtime_identity(overrides)
+        return _runtime_identity(
+            overrides, profile_configured=profile_configured,
+            model_locator=getattr(server_args, "model_path", None),
+            engine_version=engine_version,
+        )
 
     identity = identity_provider()
     reference = float(os.environ.get("PIG_TPS_REFERENCE", "50"))
@@ -108,6 +131,7 @@ class SglangGovernor(SchedulerGovernor):
             max_running_requests=max_running_requests,
             max_running=max_running,
             max_waiting=max_waiting,
+            online_exploration=True,
         )
         self.runtime_identity = runtime_identity
         self._identity_provider = identity_provider
@@ -263,6 +287,21 @@ class SglangGovernor(SchedulerGovernor):
             if self.runtime_identity is None:
                 raise RuntimeError("Governor runtime identity is unavailable")
             cells = self.core.export_profile(now)
+            if self.runtime_identity["schema"] != IDENTITY_SCHEMA:
+                missing, covered = coverage(
+                    tuple(cells), self.native_max_running_requests
+                )
+                return {
+                    "epoch": self.core.epoch,
+                    "runtime_identity_sha256": self.runtime_identity["sha256"],
+                    "coverage": {
+                        "count": covered,
+                        "total": self.native_max_running_requests * 4,
+                        "missing": [list(key) for key in missing],
+                    },
+                    "availability": "online_identity",
+                    "profile": None,
+                }
             document = build_profile_document(
                 self.runtime_identity,
                 self.native_max_running_requests,

@@ -463,7 +463,7 @@ class IntegrationTests(unittest.TestCase):
                     adapter.runtime_identity['runtime']['max_running_requests'], 17
                 )
 
-    def test_create_with_positive_reference_requires_a_frozen_profile(self):
+    def test_create_with_positive_reference_learns_without_a_frozen_profile(self):
         parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)
         schedule = SimpleNamespace(disable_overlap_schedule=True, max_running_requests=43)
         disagg = SimpleNamespace(disaggregation_mode='null')
@@ -471,7 +471,6 @@ class IntegrationTests(unittest.TestCase):
             resolved_server_args_dict=lambda: resolved_runtime()
         )
         environment = {
-            **IDENTITY_ENV,
             'PIG_GOVERNOR_ENABLE': '1',
             'PIG_GOVERNOR_LIBRARY': self.core._lib._name,
             'PIG_TPS_REFERENCE': '50',
@@ -481,8 +480,84 @@ class IntegrationTests(unittest.TestCase):
              patch('pig_governor.sglang.get_schedule', return_value=schedule), \
              patch('pig_governor.sglang.get_disagg', return_value=disagg), \
              patch('pig_governor.sglang.get_context', return_value=context):
-            with self.assertRaisesRegex(ValueError, 'PIG_TPS_PROFILE'):
-                create(SimpleNamespace(), is_generation=True)
+            adapter = create(
+                SimpleNamespace(model_path='/models/example'), is_generation=True
+            )
+            self.addCleanup(adapter.core.close)
+            self.assertIsNone(adapter.loaded_profile)
+            self.assertEqual(adapter.runtime_identity['schema'],
+                             'phala.pig.online-runtime-identity.v1')
+            self.assertEqual(adapter.runtime_identity['runtime']['max_running_requests'], 43)
+            req = SimpleNamespace(
+                rid='first', origin_input_ids=[1],
+                sampling_params=SimpleNamespace(max_new_tokens=1),
+            )
+            decision = adapter.admit_request(req, time.monotonic(), waiting_count=0)
+            self.assertTrue(decision['allowed'])
+            self.assertEqual(decision['reason_name'], 'online_exploration')
+            self.assertTrue(adapter.release_request(req))
+            exported = adapter.profile_snapshot(time.monotonic())
+            self.assertIsNone(exported['profile'])
+            self.assertEqual(exported['availability'], 'online_identity')
+
+    def test_online_exploration_is_bounded_and_learned_risk_rejects(self):
+        core = Governor(50, max_running_requests=3)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(core, max_running_requests=3)
+        def req(rid):
+            return SimpleNamespace(rid=rid, origin_input_ids=[1],
+                                   sampling_params=SimpleNamespace(max_new_tokens=1))
+        first = req('first')
+        self.assertEqual(adapter.admit_request(first, 0, waiting_count=0)['reason'], 7)
+        blocked = req('blocked')
+        self.assertEqual(adapter.admit_request(blocked, 0.1, waiting_count=0)['reason'], 4)
+        self.assertFalse(hasattr(blocked, 'governor_reservation'))
+        self.assertTrue(adapter.release_request(first))
+        self.assertEqual(adapter.outstanding, 0)
+        self.assertEqual(adapter.admit_request(req('cooldown'), 0.2, waiting_count=0)['reason'], 4)
+        core.observe_surface(0.3, 8, 0.2, 1, 0)
+        self.assertEqual(adapter.admit_request(req('slow'), 0.3, waiting_count=0)['reason'], 2)
+        self.assertEqual(adapter.outstanding, 0)
+
+    def test_online_exploration_expands_one_cell_at_a_time(self):
+        core = Governor(50, max_running_requests=3)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(core, max_running_requests=3)
+        def req(rid):
+            return SimpleNamespace(rid=rid, origin_input_ids=[1],
+                                   sampling_params=SimpleNamespace(max_new_tokens=1))
+        first = req('first')
+        decision = adapter.admit_request(first, 0, waiting_count=0)
+        self.assertEqual(decision['reason'], 7)
+        decision['reason'] = 4
+        self.assertTrue(adapter.release_request(first))
+        self.assertFalse(adapter.release_request(first))
+        core.observe_surface(0.2, 20, 0.2, 1, 0)
+        fit = req('fit')
+        self.assertEqual(adapter.admit_request(fit, 2.1, waiting_count=0)['reason'], 0)
+        probe = req('probe')
+        self.assertEqual(adapter.admit_request(probe, 2.1, waiting_count=0)['reason'], 7)
+        self.assertEqual(adapter.admit_request(req('third'), 2.1, waiting_count=0)['reason'], 4)
+        self.assertTrue(adapter.release_request(probe))
+        self.assertTrue(adapter.release_request(fit))
+        self.assertEqual(adapter.outstanding, 0)
+        self.assertEqual(adapter.admitted_pressure_counts, [0, 0, 0, 0])
+
+    def test_online_exploration_retries_after_cooldown_without_learning(self):
+        core = Governor(50, max_running_requests=1)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(core, max_running_requests=1)
+        def req(rid):
+            return SimpleNamespace(rid=rid, origin_input_ids=[1],
+                                   sampling_params=SimpleNamespace(max_new_tokens=1))
+        first = req('first')
+        self.assertEqual(adapter.admit_request(first, 0, waiting_count=0)['reason'], 7)
+        self.assertTrue(adapter.release_request(first))
+        self.assertEqual(adapter.admit_request(req('early'), 1.9, waiting_count=0)['reason'], 4)
+        self.assertEqual(adapter.admit_request(req('queued'), 2, waiting_count=1)['reason'], 4)
+        retry = req('retry')
+        self.assertEqual(adapter.admit_request(retry, 2, waiting_count=0)['reason'], 7)
+        self.assertTrue(adapter.release_request(retry))
 
     def test_create_accepts_only_non_decreasing_profile_capacity(self):
         parallel = SimpleNamespace(tp_size=1, pp_size=1, dp_size=1)

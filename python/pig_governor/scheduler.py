@@ -10,6 +10,9 @@ import threading
 
 MAX_WAITING_LIMIT = 3
 ADMISSION_REASON_WAITING_LIMIT = 5
+ADMISSION_REASON_ONLINE_EXPLORATION = 7
+EXPLORATION_INTERVAL_SECONDS = 2.0
+EXPLORATION_HEADROOM = 1.25
 ADMISSION_REASON_NAMES = {
     0: "fit",
     1: "reference_disabled",
@@ -18,6 +21,7 @@ ADMISSION_REASON_NAMES = {
     4: "unknown",
     ADMISSION_REASON_WAITING_LIMIT: "waiting_limit",
     6: "aggregate_tps_risk",
+    ADMISSION_REASON_ONLINE_EXPLORATION: "online_exploration",
 }
 
 
@@ -37,6 +41,7 @@ class Reservation:
     owner: object
     pressure_class: int
     decision: dict
+    exploration: bool = False
     released: bool = False
 
 
@@ -56,7 +61,7 @@ class SchedulerGovernor:
             raise ValueError("Invalid Governor max_waiting")
 
     def __init__(self, core, *, max_running_requests=1, max_running=None,
-                 max_waiting=MAX_WAITING_LIMIT):
+                 max_waiting=MAX_WAITING_LIMIT, online_exploration=False):
         if max_running is None:
             max_running = max_running_requests
         self._validate_limits(max_running_requests, max_running, max_waiting)
@@ -72,6 +77,26 @@ class SchedulerGovernor:
         self.active_pressure_counts = [0, 0, 0, 0]
         self._pending_evidence = {}
         self._surface_time = None
+        self.online_exploration = online_exploration
+        self._exploration_active = False
+        self._last_exploration_at = None
+
+    def _exploration_allowed(self, now, projected_concurrency, pressure_class,
+                             waiting_count, outstanding_after):
+        if (not self.online_exploration or self._exploration_active
+                or outstanding_after > self.max_running
+                or waiting_count not in (None, 0)
+                or (waiting_count is None and self.outstanding != 0)
+                or (self._last_exploration_at is not None
+                    and now - self._last_exploration_at < EXPLORATION_INTERVAL_SECONDS)):
+            return False
+        if projected_concurrency == 1:
+            return self.outstanding == 0
+        if projected_concurrency != self.outstanding + 1:
+            return False
+        lower = self.core.admit(now, projected_concurrency - 1, pressure_class)
+        return (lower["allowed"] and lower["projected_tps"]
+                >= lower["reference"] * EXPLORATION_HEADROOM)
 
     @property
     def native_max_running_requests(self):
@@ -151,6 +176,15 @@ class SchedulerGovernor:
             decision = dict(
                 self.core.admit(now, projected_concurrency, projected_pressure)
             )
+            if (decision.get("reason") == 4
+                    and self._exploration_allowed(
+                        now, projected_concurrency, projected_pressure,
+                        waiting_count, outstanding_after,
+                    )):
+                decision.update(
+                    allowed=True, reason=ADMISSION_REASON_ONLINE_EXPLORATION,
+                    evidence_source="online_exploration",
+                )
             reason = decision.get("reason")
             if reason not in ADMISSION_REASON_NAMES:
                 raise RuntimeError("Governor returned an unknown admission reason")
@@ -173,7 +207,13 @@ class SchedulerGovernor:
             if not decision["allowed"]:
                 return decision
 
-            req.governor_reservation = Reservation(self, pressure_class, decision)
+            exploration = decision["reason"] == ADMISSION_REASON_ONLINE_EXPLORATION
+            req.governor_reservation = Reservation(
+                self, pressure_class, decision, exploration=exploration
+            )
+            if exploration:
+                self._exploration_active = True
+                self._last_exploration_at = now
             self.outstanding = outstanding_after
             self.admitted_pressure_counts[pressure_class] += 1
             return decision
@@ -192,6 +232,8 @@ class SchedulerGovernor:
                 raise RuntimeError("Governor reservation accounting underflow")
             self.outstanding -= 1
             self.admitted_pressure_counts[reservation.pressure_class] -= 1
+            if reservation.exploration:
+                self._exploration_active = False
             reservation.released = True
             return True
 

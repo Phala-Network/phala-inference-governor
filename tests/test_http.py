@@ -491,6 +491,19 @@ class GovernorHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(document(response), self.manager.profile)
         self.assertEqual(self.manager.get_calls, 1)
 
+    async def test_profile_reports_online_identity_without_loadable_document(self):
+        online = copy.deepcopy(self.manager.profile)
+        online["profile"] = None
+        online["availability"] = "online_identity"
+        self.manager.profile = online
+        response = await self.profile()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(document(response), online)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        online["coverage"]["count"] = 1
+        response = await self.profile()
+        self.assertEqual(response.status_code, 503)
+
     async def test_profile_rejects_a_stale_epoch(self):
         response = await self.profile(epoch="0" * 32)
         self.assertEqual(response.status_code, 409)

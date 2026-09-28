@@ -1,4 +1,4 @@
-"""Canonical, versioned runtime identities for offline profile binding."""
+"""Canonical runtime identities for online learning and optional profile binding."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +11,7 @@ from typing import Mapping
 
 
 IDENTITY_SCHEMA = "phala.pig.runtime-identity.v1"
+ONLINE_IDENTITY_SCHEMA = "phala.pig.online-runtime-identity.v1"
 COMMIT_ENV_FIELDS = ("PIG_ENGINE_COMMIT", "PIG_GOVERNOR_COMMIT")
 STRING_ENV_FIELDS = ("PIG_MODEL_ARTIFACT_ID", "PIG_RUNTIME_HARDWARE_ID")
 JSON_SAFE_INTEGER = 2**53 - 1
@@ -83,14 +84,18 @@ def _required_environment(environment: Mapping[str, str]) -> dict[str, str]:
         value = environment.get(name)
         if type(value) is not str or not value:
             raise ValueError(f"{name} must be set to a non-empty string")
-        if name in COMMIT_ENV_FIELDS and not _COMMIT_RE.fullmatch(value):
-            raise ValueError(f"{name} must be 40 lowercase hexadecimal characters")
-        if name == "PIG_MODEL_ARTIFACT_ID" and not _MODEL_RE.fullmatch(value):
-            raise ValueError(f"{name} must be sha256: followed by 64 lowercase hex characters")
-        if name == "PIG_RUNTIME_HARDWARE_ID" and not _HARDWARE_RE.fullmatch(value):
-            raise ValueError(f"{name} must be a non-empty lowercase slug")
-        result[name] = value
+        result[name] = _environment_value(name, value)
     return result
+
+
+def _environment_value(name: str, value: str) -> str:
+    if name in COMMIT_ENV_FIELDS and not _COMMIT_RE.fullmatch(value):
+        raise ValueError(f"{name} must be 40 lowercase hexadecimal characters")
+    if name == "PIG_MODEL_ARTIFACT_ID" and not _MODEL_RE.fullmatch(value):
+        raise ValueError(f"{name} must be sha256: followed by 64 lowercase hex characters")
+    if name == "PIG_RUNTIME_HARDWARE_ID" and not _HARDWARE_RE.fullmatch(value):
+        raise ValueError(f"{name} must be a non-empty lowercase slug")
+    return value
 
 
 def _runtime_value(name: str, value: object) -> object:
@@ -156,6 +161,39 @@ def build_runtime_identity(
         **unsigned,
         "sha256": hashlib.sha256(canonical_json(unsigned)).hexdigest(),
     }
+
+
+def build_online_runtime_identity(
+    resolved_runtime: Mapping[str, object],
+    environ: Mapping[str, str] = os.environ,
+    *,
+    model_locator: str | None = None,
+    engine_version: str | None = None,
+) -> dict[str, object]:
+    """Bind learning to observed settings without inventing artifact identities."""
+    optional_environment = {}
+    for name in COMMIT_ENV_FIELDS + STRING_ENV_FIELDS:
+        value = environ.get(name)
+        if value is not None:
+            if type(value) is not str or not value:
+                raise ValueError(f"{name} must be a non-empty string when provided")
+            value = _environment_value(name, value)
+        optional_environment[name] = value
+    for name, value in (("model_locator", model_locator),
+                        ("engine_version", engine_version)):
+        if value is not None and (type(value) is not str or not value):
+            raise ValueError(f"{name} must be a non-empty string when provided")
+    unsigned = {
+        "schema": ONLINE_IDENTITY_SCHEMA,
+        "environment": optional_environment,
+        "runtime": _runtime(resolved_runtime),
+        "model_locator_sha256": (
+            None if model_locator is None
+            else hashlib.sha256(model_locator.encode("utf-8")).hexdigest()
+        ),
+        "engine_version": engine_version,
+    }
+    return {**unsigned, "sha256": hashlib.sha256(canonical_json(unsigned)).hexdigest()}
 
 
 def build_identity(

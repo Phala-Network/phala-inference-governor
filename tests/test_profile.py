@@ -263,8 +263,7 @@ class ProfileTests(unittest.TestCase):
                 {PROFILE_PATH_ENV: "", PROFILE_SHA256_ENV: ""},
                 NOW,
             )
-        with self.assertRaisesRegex(ValueError, "PIG_TPS_PROFILE"):
-            bootstrap_profile(50, self.identity, 2, {}, NOW)
+        self.assertIsNone(bootstrap_profile(50, self.identity, 2, {}, NOW))
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "profile.json")
@@ -277,8 +276,8 @@ class ProfileTests(unittest.TestCase):
                 PROFILE_SHA256_ENV: hashlib.sha256(data).hexdigest(),
             }
             production = bootstrap_profile(50, self.identity, 2, environment, NOW)
-            self.assertEqual(production.metadata["bootstrap_mode"], "production")
-            self.assertTrue(production.metadata["coverage_required"])
+            self.assertEqual(production.metadata["bootstrap_mode"], "optional_prior")
+            self.assertFalse(production.metadata["coverage_required"])
             self.assertEqual(production.cells[0]["evidence_lower_tps"], 10.0)
 
     def test_bootstrap_allows_partial_only_for_offline_sampling(self):
@@ -296,8 +295,8 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(sampled.metadata["bootstrap_mode"], "offline_sampling")
             self.assertFalse(sampled.metadata["coverage_complete"])
             self.assertEqual(sampled.missing, ((1, 3), (2, 3)))
-            with self.assertRaisesRegex(ValueError, "cover"):
-                bootstrap_profile(50, self.identity, 2, environment, NOW)
+            production = bootstrap_profile(50, self.identity, 2, environment, NOW)
+            self.assertFalse(production.metadata["coverage_complete"])
 
     def test_future_created_at_is_rejected(self):
         document = copy.deepcopy(self.document)

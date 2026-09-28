@@ -117,9 +117,11 @@ async def endpoint(manager, request):
 
 
 def _profile_envelope(value):
-    if type(value) is not dict or set(value) != {
+    if type(value) is not dict or set(value) not in ({
         "epoch", "runtime_identity_sha256", "coverage", "profile"
-    }:
+    }, {
+        "epoch", "runtime_identity_sha256", "coverage", "profile", "availability"
+    }):
         raise ValueError("Invalid profile envelope fields")
     if not _lower_hex(value["epoch"], 32):
         raise ValueError("Invalid profile epoch")
@@ -127,6 +129,32 @@ def _profile_envelope(value):
         raise ValueError("Invalid runtime identity digest")
 
     document = value["profile"]
+    if document is None:
+        if value.get("availability") != "online_identity":
+            raise ValueError("Invalid online profile availability")
+        summary = value["coverage"]
+        if type(summary) is not dict or set(summary) != {"count", "total", "missing"}:
+            raise ValueError("Invalid online profile coverage fields")
+        total = summary["total"]
+        missing = summary["missing"]
+        if (type(total) is not int or not 0 < total < 2**32 * 4 or total % 4
+                or type(summary["count"]) is not int
+                or type(missing) is not list
+                or len(missing) > total
+                or summary["count"] != total - len(missing)):
+            raise ValueError("Invalid online profile coverage")
+        maximum = total // 4
+        previous = None
+        for key in missing:
+            if (type(key) is not list or len(key) != 2
+                    or type(key[0]) is not int or type(key[1]) is not int
+                    or not 1 <= key[0] <= maximum or not 0 <= key[1] < 4
+                    or (previous is not None and tuple(key) <= previous)):
+                raise ValueError("Invalid online profile missing cells")
+            previous = tuple(key)
+        return value
+    if "availability" in value:
+        raise ValueError("Loadable profile cannot have online availability")
     if type(document) is not dict:
         raise ValueError("Invalid profile document")
     maximum = document.get("max_running_requests")

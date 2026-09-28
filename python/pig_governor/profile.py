@@ -396,8 +396,8 @@ def _bootstrap_metadata(profile: LoadedProfile, reference: float) -> LoadedProfi
     metadata = MappingProxyType({
         **profile.metadata,
         "bootstrap_reference": reference,
-        "bootstrap_mode": "production" if reference > 0 else "offline_sampling",
-        "coverage_required": reference > 0,
+        "bootstrap_mode": "optional_prior" if reference > 0 else "offline_sampling",
+        "coverage_required": False,
         "coverage_complete": not profile.missing,
     })
     return LoadedProfile(
@@ -413,25 +413,19 @@ def bootstrap_profile(
     environ: Mapping[str, str] = os.environ,
     now_utc: datetime | float | int | None = None,
 ) -> LoadedProfile | None:
-    """Load configured startup evidence, failing closed for production policy."""
+    """Load an explicitly configured prior; online learning needs no profile."""
     reference_value = _number(reference, "reference")
     path = environ.get(PROFILE_PATH_ENV)
     digest = environ.get(PROFILE_SHA256_ENV)
     if (path is None) != (digest is None):
         raise ValueError(f"{PROFILE_PATH_ENV} and {PROFILE_SHA256_ENV} must be configured together")
     if path is None:
-        if reference_value == 0:
-            return None
-        raise ValueError(
-            f"{PROFILE_PATH_ENV} and {PROFILE_SHA256_ENV} are required when reference is positive"
-        )
+        return None
     if type(path) is not str or not path or type(digest) is not str or not digest:
         raise ValueError("TPS profile path and sha256 must be non-empty strings")
     profile = load_profile(
         path, digest, runtime_identity, max_running_requests, now_utc
     )
-    if reference_value > 0 and profile.missing:
-        raise ValueError("TPS profile does not cover every reachable response-surface cell")
     return _bootstrap_metadata(profile, reference_value)
 
 

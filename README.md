@@ -40,36 +40,41 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.5` uses C ABI v4. Production runtime configuration binds a
-frozen response-surface profile to the exact composed engine, Governor source,
-model artifact, hardware class and resolved SGLang settings:
+Component `0.2.6` uses C ABI v4. Online learning starts with the resolved
+SGLang settings and a positive TPS reference; it does not need a precomputed
+model profile or manually supplied artifact/hardware identifiers:
 
 ```text
 PIG_GOVERNOR_ENABLE=1
 PIG_GOVERNOR_LIBRARY=/absolute/image/path/libpig_governor_core.so
 PIG_TPS_REFERENCE=50
-PIG_TPS_PROFILE_PATH=/absolute/image/path/qwen3.8-27b-profile.json
-PIG_TPS_PROFILE_SHA256=<64 lowercase hex characters>
-PIG_ENGINE_COMMIT=<40 lowercase hex characters>
-PIG_GOVERNOR_COMMIT=<40 lowercase hex characters>
-PIG_MODEL_ARTIFACT_ID=sha256:<64 lowercase hex characters>
-PIG_RUNTIME_HARDWARE_ID=h200-sxm-tp1-v1
 ```
+
+An existing v1 response-surface profile may be supplied with both
+`PIG_TPS_PROFILE_PATH` and `PIG_TPS_PROFILE_SHA256` as an optional startup prior.
+That explicit path retains strict commit, artifact, hardware, predictor, expiry,
+SHA-256 and resolved-runtime validation. Missing profile cells are learned online.
 
 `pig_governor_admission.waiting_count` is the live native waiting-owner count
 when supplied by the Scheduler. Without a native sample it is `0` only after
 all Governor reservations drain, and otherwise `null`. The separate
 `last_waiting_count` is the most recent admission sample, not a live queue size.
 
-With a positive reference, both profile variables are required and the profile
-must be unexpired and cover every reachable response-surface cell through exact
-or jointly-heavier evidence. Static runtime identity fields must match exactly.
-The probed `runtime.max_total_tokens` is a minimum capacity: the current runtime
-may load a profile only when its capacity is greater than or equal to the sampled
-capacity. Any decrease fails closed. `PIG_TPS_REFERENCE=0` is the explicit
-offline sampling mode and may start without a profile. Runtime/model identity
-changes clear prior and live evidence, rotate the CAS epoch and fail closed until
-fresh qualified evidence exists.
+Without a profile, the online identity records the complete resolved runtime,
+available version/commit/artifact/hardware fields, and a hash of the model
+locator when available. Missing fields remain null; no artifact digest or
+hardware slug is invented. Identity changes clear prior and live evidence and
+rotate the CAS epoch. With an optional v1 profile, static fields still match
+exactly; probed `runtime.max_total_tokens` may increase but not decrease.
+
+Unknown response-surface cells use bounded exploration: at most one exploratory
+reservation is active, starts are at least two seconds apart, and exploration
+requires zero native waiting owners and stays within `max_running`. Concurrency
+expands one cell at a time only when the adjacent lighter cell has qualified
+evidence at least 1.25 times the reference. A lone request can periodically
+reprobe after insufficient or stale evidence. Once a cell has qualified data,
+its forecast decides admission; measured TPS below the reference rejects with
+429. `PIG_TPS_REFERENCE=0` remains an explicit unrestricted sampling mode.
 
 Production uses the official `sglang serve` command. With the supplied auth patch,
 `PIG_AUTH_FROM_TOKEN=1` reads the existing deployment `TOKEN` for both API and
@@ -93,12 +98,12 @@ preserves the learned response surface.
 Restoring a positive waiting limit through CAS resumes admission without a
 restart.
 
-Authenticated `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` exports
-one epoch-guarded, non-cacheable envelope containing the exact runtime identity,
-coverage report and a loadable profile document. Persist the nested `profile`
-document as canonical JSON, review it, hash the exact bytes and configure that
-path/hash for the production restart. A stale epoch returns 409; malformed or
-multi-rank state fails closed with 503.
+Authenticated `GET /admin/v1/predictive-profile?expected_epoch=<epoch>` returns
+an epoch-guarded, non-cacheable coverage envelope. Online identity mode returns
+`availability=online_identity` and `profile=null`: it does not fabricate a
+loadable v1 profile. An explicitly profile-bound v1 identity can still export a
+loadable profile document. A stale epoch returns 409; malformed or multi-rank
+state fails closed with 503.
 
 Production launchers should suppress the polling endpoints from Uvicorn access
 logs together with metrics:
@@ -109,8 +114,9 @@ logs together with metrics:
 
 Admission is TPS-first and occurs before SGLang's grammar or ordinary waiting
 queue. It forecasts the candidate's projected `(Decode concurrency, context
-pressure)` cell from measured per-user Decode evidence, and returns HTTP 429 when
-that cell is unqualified or falls below the reference. A TPS-fit request is then
+pressure)` cell from measured per-user Decode evidence; unknown cells follow the
+bounded exploration gate above. A qualified cell below the reference returns
+HTTP 429. A TPS-fit request is then
 rejected when it would exceed either the logical `max_running + max_waiting`
 capacity or the actual native waiting bound. Production defaults are 43 running
 and 3 waiting. The fourth queued arrival is rejected even when logical running
@@ -153,8 +159,9 @@ See [development acceptance](docs/validation/DEV_V0520_ACCEPTANCE.md) for exact
 runtime identity, retained failed probes and evidence boundaries. Strict dynamic
 platform policy failed; launch/model measurement coverage remains unproven.
 Final-image verification, reproducible image publication and the authorized
-production test remain pending. Package version 0.2.2 identifies the ABI v4
-source candidate; it is not a claim that those release gates have passed.
+production test remain pending. Package version 0.2.6 identifies the online
+learning source candidate with unchanged ABI v4; it does not claim those release
+gates have passed.
 Historical v0.1.0 tags, the 0.1.1 source state and mixed-source image evidence
 remain unchanged.
 

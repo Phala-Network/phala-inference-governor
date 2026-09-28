@@ -24,6 +24,8 @@ pub const ADMISSION_UNKNOWN: u32 = 4;
 /// composed admission decision.
 pub const ADMISSION_WAITING_LIMIT: u32 = 5;
 pub const ADMISSION_AGGREGATE_TPS_RISK: u32 = 6;
+/// Scheduler-owned bounded probe after the core reports unknown evidence.
+pub const ADMISSION_ONLINE_EXPLORATION: u32 = 7;
 
 const BUCKET_SECONDS: f64 = 0.5;
 const WINDOW_SECONDS: f64 = 60.0;

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import math
 import unittest
 
@@ -6,6 +7,7 @@ from pig_governor.identity import (
     JSON_SAFE_INTEGER,
     RESOLVED_RUNTIME_FIELDS,
     build_runtime_identity,
+    build_online_runtime_identity,
     canonical_json,
     compare_identity,
     compare_profile_compatibility,
@@ -70,6 +72,20 @@ def resolved_runtime():
 
 
 class RuntimeIdentityTests(unittest.TestCase):
+    def test_online_identity_accepts_missing_manual_ids_without_inventing_values(self):
+        identity = build_online_runtime_identity(
+            resolved_runtime(), {}, model_locator="/models/example"
+        )
+        self.assertEqual(identity["schema"], "phala.pig.online-runtime-identity.v1")
+        self.assertEqual(identity["runtime"]["max_running_requests"], 2)
+        self.assertIsNone(identity["environment"]["PIG_MODEL_ARTIFACT_ID"])
+        self.assertIsNone(identity["environment"]["PIG_RUNTIME_HARDWARE_ID"])
+        self.assertEqual(
+            identity["model_locator_sha256"],
+            hashlib.sha256(b"/models/example").hexdigest(),
+        )
+        self.assertNotIn("/models/example", str(identity))
+
     def test_required_field_set_is_exact_and_canonical_order_is_stable(self):
         runtime = resolved_runtime()
         self.assertEqual(set(runtime), RESOLVED_RUNTIME_FIELDS)
