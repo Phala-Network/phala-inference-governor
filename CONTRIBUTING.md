@@ -23,3 +23,19 @@ historical tags and artifacts; never force-update them to rename ownership.
 Qualified TP1/PP1/DP1/non-overlap behavior does not establish broader support.
 Select actual maintainers for CODEOWNERS only after verifying responsibility;
 do not inherit unrelated upstream ownership rules automatically.
+
+## Local checks
+
+Use Linux with Rust and Python 3.10 or later for the native FFI checks:
+
+```bash
+cargo test --manifest-path rust/Cargo.toml --locked --offline
+cargo build --manifest-path rust/Cargo.toml --release --locked --offline
+PYTHONPATH=python PIG_GOVERNOR_LIBRARY="$PWD/rust/target/release/libpig_governor_core.so" \
+  python -m unittest discover -s tests -p test_ffi.py -v
+```
+
+Full Python/SGLang integration needs the compatible complete engine and runtime
+specified in [CI](.github/workflows/core-tests.yml). A component-only check is not
+GPU or final-image acceptance. Keep changes focused, include affected regressions,
+and integrate validated work into `main`; see [releases](docs/RELEASING.md).
