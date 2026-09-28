@@ -22,6 +22,12 @@ class Core:
         self.last_time = now
         self.rows.append(("observe", now, delta, active_after))
 
+    def quarantine(self, now, active_after, enabled):
+        if self.last_time is not None and now < self.last_time:
+            raise ValueError("Clock went backwards")
+        self.last_time = now
+        self.rows.append(("quarantine", now, active_after, enabled))
+
     def observe_surface(self, now, delta, duration, concurrency, pressure_class):
         self.rows.append(
             ("surface", now, delta, duration, concurrency, pressure_class)
@@ -92,6 +98,95 @@ def request(rid, input_tokens=16, max_new_tokens=16):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_internal_health_releases_without_spending_business_exploration(self):
+        core = Core()
+        core.allowed = False
+        core.reason = 4
+        adapter = SchedulerGovernor(
+            core, max_running_requests=1, online_exploration=True
+        )
+        health = request("health", input_tokens=1, max_new_tokens=1)
+        decision = adapter.admit_request(
+            health, 100, waiting_count=0, is_health_check=True
+        )
+        self.assertEqual(decision["reason_name"], "health_check")
+        self.assertEqual(adapter._last_exploration_at, None)
+        self.assertEqual(adapter.outstanding, 1)
+        adapter.commit_batch([], 100.1)
+        self.assertTrue(adapter.release_request(health))
+        self.assertFalse(adapter.release_request(health))
+        ordinary = request("ordinary", input_tokens=1, max_new_tokens=1)
+        admitted = adapter.admit_request(ordinary, 101, waiting_count=0)
+        self.assertEqual(admitted["reason_name"], "online_exploration")
+        self.assertTrue(admitted["allowed"])
+        adapter.release_request(ordinary)
+        self.assertFalse(adapter.admit_request(
+            request("next", input_tokens=1, max_new_tokens=1),
+            101.1, waiting_count=0,
+        )["allowed"])
+        self.assertEqual(adapter.admit_request(
+            request("after-cooldown", input_tokens=1, max_new_tokens=1),
+            103, waiting_count=0,
+        )["reason_name"], "online_exploration")
+        self.assertEqual(adapter._last_exploration_at, 103)
+        self.assertEqual(adapter._health_outstanding, 0)
+        self.assertEqual(adapter.admitted_pressure_counts, [1, 0, 0, 0])
+
+    def test_internal_health_capacity_shape_and_identity_limit(self):
+        core = Core()
+        core.allowed = False
+        core.reason = 4
+        adapter = SchedulerGovernor(
+            core, max_running_requests=1, max_running=1,
+            online_exploration=True,
+        )
+        bad = request("bad", input_tokens=2, max_new_tokens=1)
+        with self.assertRaisesRegex(ValueError, "one token"):
+            adapter.admit_request(bad, 1, is_health_check=True)
+        health = request("health", input_tokens=1, max_new_tokens=1)
+        self.assertTrue(adapter.admit_request(
+            health, 2, waiting_count=0, is_health_check=True,
+        )["allowed"])
+        full = request("full", input_tokens=1, max_new_tokens=1)
+        self.assertEqual(adapter.admit_request(
+            full, 2.1, waiting_count=0, is_health_check=True,
+        )["reason_name"], "waiting_limit")
+        self.assertFalse(hasattr(full, "governor_reservation"))
+        self.assertEqual(adapter.outstanding, 1)
+        adapter.release_request(health)
+        adapter._admission_paused = True
+        paused = request("paused", input_tokens=1, max_new_tokens=1)
+        self.assertEqual(adapter.admit_request(
+            paused, 3, waiting_count=0, is_health_check=True,
+        )["reason_name"], "identity_transition")
+        self.assertEqual(adapter.outstanding, 0)
+
+    def test_mixed_health_gap_quarantines_pending_and_resumes_clean_interval(self):
+        core = Core()
+        adapter = SchedulerGovernor(core, max_running_requests=4)
+        business = request("business")
+        adapter.admit_request(business, 0)
+        progress = Progress()
+        adapter.commit_batch([(progress, 1, False, 0)], 1)
+        health = request("health", input_tokens=1, max_new_tokens=1)
+        adapter.admit_request(health, 2, is_health_check=True)
+        adapter.commit_batch([(progress, 5, False, 0)], 3)
+        self.assertEqual(progress.output_tokens, 5)
+        self.assertEqual(adapter.active, 1)
+        self.assertEqual(adapter._pending_evidence, {})
+        adapter.release_request(health)
+        adapter.commit_batch([(progress, 6, False, 0)], 4)
+        adapter.commit_batch([(progress, 8, False, 0)], 5)
+        surfaces = [row for row in core.rows if row[0] == "surface"]
+        self.assertEqual(surfaces, [("surface", 5, 2, 1, 1, 0)])
+        self.assertEqual([
+            row for row in core.rows if row[0] == "quarantine"
+        ], [
+            ("quarantine", 2, 1, True),
+            ("quarantine", 3, 1, True),
+            ("quarantine", 4, 1, False),
+        ])
+
     def test_duplicate_progress_in_batch_does_not_change_accounting(self):
         core = Core()
         adapter = SchedulerGovernor(core, max_running_requests=4)

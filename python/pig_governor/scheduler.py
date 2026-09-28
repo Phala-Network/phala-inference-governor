@@ -12,6 +12,7 @@ MAX_WAITING_LIMIT = 3
 ADMISSION_REASON_WAITING_LIMIT = 5
 ADMISSION_REASON_ONLINE_EXPLORATION = 7
 ADMISSION_REASON_IDENTITY_TRANSITION = 8
+ADMISSION_REASON_HEALTH_CHECK = 9
 EXPLORATION_INTERVAL_SECONDS = 2.0
 EXPLORATION_HEADROOM = 1.25
 ADMISSION_REASON_NAMES = {
@@ -24,6 +25,7 @@ ADMISSION_REASON_NAMES = {
     6: "aggregate_tps_risk",
     ADMISSION_REASON_ONLINE_EXPLORATION: "online_exploration",
     ADMISSION_REASON_IDENTITY_TRANSITION: "identity_transition",
+    ADMISSION_REASON_HEALTH_CHECK: "health_check",
 }
 
 
@@ -44,6 +46,7 @@ class Reservation:
     pressure_class: int
     decision: dict
     exploration: bool = False
+    health_check: bool = False
     released: bool = False
 
 
@@ -83,6 +86,8 @@ class SchedulerGovernor:
         self._exploration_active = False
         self._last_exploration_at = None
         self._admission_paused = False
+        self._health_outstanding = 0
+        self._health_observation_dirty = False
 
     def _exploration_allowed(self, now, projected_concurrency, pressure_class,
                              waiting_count, outstanding_after):
@@ -134,22 +139,32 @@ class SchedulerGovernor:
                 return index
         return candidate_class
 
-    def admit_request(self, req, now, *, is_retracted=False, waiting_count=None):
+    def admit_request(self, req, now, *, is_retracted=False, waiting_count=None,
+                      is_health_check=False):
         """Atomically forecast and reserve one native request.
 
         The caller is the single admission owner.  It must call
         ``release_request`` if a later native enqueue step rolls back.
         """
         with self._policy_lock:
+            if type(is_health_check) is not bool:
+                raise ValueError("is_health_check must be boolean")
             reservation = getattr(req, "governor_reservation", None)
             if reservation is not None:
                 if reservation.owner is not self:
                     raise RuntimeError("Request belongs to a different Governor owner")
                 if reservation.released:
                     raise RuntimeError("Released Governor reservation cannot be reused")
+                if reservation.health_check != is_health_check:
+                    raise RuntimeError("Request health identity changed after admission")
                 return reservation.decision
             if is_retracted:
                 raise RuntimeError("Retracted request has no Governor reservation")
+            if is_health_check and (
+                len(req.origin_input_ids) != 1
+                or req.sampling_params.max_new_tokens != 1
+            ):
+                raise ValueError("Internal health request must generate one token")
 
             outstanding_after = self.outstanding + 1
             logical_projected_waiting = max(
@@ -177,13 +192,30 @@ class SchedulerGovernor:
                 outstanding_after, self.native_max_running_requests
             )
             projected_pressure = self._projected_pressure_class(pressure_class)
-            decision = dict(
-                self.core.admit(now, projected_concurrency, projected_pressure)
+            health_fits = (
+                is_health_check and not self._admission_paused
+                and outstanding_after <= self.max_running
+                and projected_waiting <= self.max_waiting
             )
+            if health_fits:
+                self.core.quarantine(now, self.active, True)
+            try:
+                decision = dict(
+                    self.core.admit(now, projected_concurrency, projected_pressure)
+                )
+            except Exception:
+                if health_fits:
+                    self.core.quarantine(now, self.active, False)
+                raise
             if self._admission_paused:
                 decision.update(
                     allowed=False, reason=ADMISSION_REASON_IDENTITY_TRANSITION,
                     evidence_source="none",
+                )
+            elif is_health_check:
+                decision.update(
+                    allowed=True, reason=ADMISSION_REASON_HEALTH_CHECK,
+                    evidence_source="internal_health",
                 )
             elif (decision.get("reason") == 4
                     and self._exploration_allowed(
@@ -213,18 +245,29 @@ class SchedulerGovernor:
                 decision["reason_name"] = ADMISSION_REASON_NAMES[
                     ADMISSION_REASON_WAITING_LIMIT
                 ]
+            if decision["allowed"] and is_health_check and outstanding_after > self.max_running:
+                decision.update(
+                    allowed=False,
+                    reason=ADMISSION_REASON_WAITING_LIMIT,
+                    reason_name=ADMISSION_REASON_NAMES[ADMISSION_REASON_WAITING_LIMIT],
+                )
             if not decision["allowed"]:
                 return decision
 
             exploration = decision["reason"] == ADMISSION_REASON_ONLINE_EXPLORATION
             req.governor_reservation = Reservation(
-                self, pressure_class, decision, exploration=exploration
+                self, pressure_class, decision, exploration=exploration,
+                health_check=is_health_check,
             )
             if exploration:
                 self._exploration_active = True
                 self._last_exploration_at = now
             self.outstanding = outstanding_after
             self.admitted_pressure_counts[pressure_class] += 1
+            if is_health_check:
+                self._health_outstanding += 1
+                self._health_observation_dirty = True
+                self._pending_evidence = {}
             return decision
 
     def release_request(self, req):
@@ -239,8 +282,13 @@ class SchedulerGovernor:
                 return False
             if self.outstanding <= 0 or self.admitted_pressure_counts[reservation.pressure_class] <= 0:
                 raise RuntimeError("Governor reservation accounting underflow")
+            if reservation.health_check:
+                if self._health_outstanding <= 0:
+                    raise RuntimeError("Health reservation accounting underflow")
             self.outstanding -= 1
             self.admitted_pressure_counts[reservation.pressure_class] -= 1
+            if reservation.health_check:
+                self._health_outstanding -= 1
             if reservation.exploration:
                 self._exploration_active = False
             reservation.released = True
@@ -281,12 +329,12 @@ class SchedulerGovernor:
             )
             return snapshot
 
-    def commit_batch(self, updates, now):
+    def commit_batch(self, updates, now, *, quarantine=False):
         """Commit one native forward batch before publishing state changes."""
         with self._policy_lock:
-            self._commit_batch_locked(updates, now)
+            self._commit_batch_locked(updates, now, quarantine=quarantine)
 
-    def _commit_batch_locked(self, updates, now):
+    def _commit_batch_locked(self, updates, now, *, quarantine=False):
         """Apply a batch while the Scheduler policy lock is held."""
         if not isinstance(updates, (list, tuple)):
             raise ValueError("Expected a batch update sequence")
@@ -356,6 +404,20 @@ class SchedulerGovernor:
             pressure_after[index] += entering[index] - leaving[index]
             if pressure_after[index] < 0:
                 raise RuntimeError("Active pressure accounting underflow")
+
+        if quarantine or self._health_outstanding or self._health_observation_dirty:
+            self.core.quarantine(now, active_after, self._health_outstanding > 0)
+            for progress, output_tokens, new_decoding, terminal, new_last_time in proposed:
+                progress.output_tokens = output_tokens
+                progress.decoding = new_decoding
+                progress.terminal = terminal
+                progress.last_time = new_last_time
+            self.active = active_after
+            self.active_pressure_counts = pressure_after
+            self._pending_evidence = {}
+            self._surface_time = now
+            self._health_observation_dirty = self._health_outstanding > 0
+            return
 
         if self._surface_time is None:
             elapsed = 0.0

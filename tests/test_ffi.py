@@ -34,42 +34,60 @@ class BindingCompatibilityTests(unittest.TestCase):
             "approved_lower_tps": 40,
         })
 
-    def test_old_abi_is_rejected_before_v4_symbol_binding(self):
+    def test_old_abi_is_rejected_before_v5_symbol_binding(self):
         library = type("OldLibrary", (), {
-            "pig_governor_abi_version": FakeFunction(3),
+            "pig_governor_abi_version": FakeFunction(4),
         })()
         with mock.patch.object(core_module.C, "CDLL", return_value=library):
-            with self.assertRaisesRegex(RuntimeError, "expected version 4"):
+            with self.assertRaisesRegex(RuntimeError, "expected version 5"):
                 Governor(50, max_running_requests=4, library=os.path.abspath("old.dll"))
 
-    def test_missing_abi_and_v4_symbol_have_stable_errors(self):
+    def test_missing_abi_and_v5_symbol_have_stable_errors(self):
         with mock.patch.object(core_module.C, "CDLL", return_value=object()):
             with self.assertRaisesRegex(RuntimeError, "does not expose an ABI version"):
                 Governor(50, max_running_requests=4, library=os.path.abspath("missing.dll"))
 
         library = type("IncompleteLibrary", (), {
-            "pig_governor_abi_version": FakeFunction(4),
+            "pig_governor_abi_version": FakeFunction(5),
         })()
         with mock.patch.object(core_module.C, "CDLL", return_value=library):
             with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_new"):
-                Governor(50, max_running_requests=4, library=os.path.abspath("v4.dll"))
+                Governor(50, max_running_requests=4, library=os.path.abspath("v5.dll"))
 
-    def test_v4_library_without_replacement_extension_is_rejected(self):
+    def test_v5_library_without_quarantine_extension_is_rejected(self):
         real = C.CDLL(os.environ["PIG_GOVERNOR_LIBRARY"])
-        class OldV4:
+        class IncompleteV5:
             def __getattr__(self, name):
-                if name == "pig_governor_observe_replacement":
+                if name == "pig_governor_quarantine":
                     raise AttributeError(name)
                 return getattr(real, name)
-        with mock.patch.object(core_module.C, "CDLL", return_value=OldV4()):
-            with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_observe_replacement"):
-                Governor(50, max_running_requests=4, library=os.path.abspath("old-v4.dll"))
+        with mock.patch.object(core_module.C, "CDLL", return_value=IncompleteV5()):
+            with self.assertRaisesRegex(RuntimeError, "missing symbol: pig_governor_quarantine"):
+                Governor(50, max_running_requests=4, library=os.path.abspath("incomplete-v5.dll"))
 
 
 class NativeAbiTests(unittest.TestCase):
     def setUp(self):
         self.core = Governor(35, max_running_requests=4)
         self.addCleanup(self.core.close)
+
+    def test_quarantine_preserves_surface_and_excludes_read_time_exposure(self):
+        self.core.observe(0, 0, 1)
+        self.core.observe_batch(1, 100, 1, 1, 0, 1)
+        prior = self.core.export_profile(1)
+        self.assertEqual(len(prior), 1)
+        self.core.quarantine(1, 1, True)
+        self.core.admit(2, 1, 0)
+        during = self.core.snapshot(3)
+        self.assertEqual(during['decode_tokens'], 100)
+        self.assertEqual(during['decode_sequence_seconds'], 1)
+        self.assertEqual(self.core.export_profile(3)[0]['long_tokens'], 100)
+        self.core.quarantine(4, 1, False)
+        self.assertEqual(self.core.snapshot(4)['decode_sequence_seconds'], 1)
+        self.core.observe_batch(5, 20, 1, 1, 0, 1)
+        resumed = self.core.snapshot(5)
+        self.assertEqual(resumed['decode_tokens'], 120)
+        self.assertEqual(resumed['decode_sequence_seconds'], 2)
 
     def test_real_ffi_window_and_reference_cas_contract(self):
         self.core.observe(0, 0, 2)

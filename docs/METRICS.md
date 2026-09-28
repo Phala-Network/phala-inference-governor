@@ -1,6 +1,6 @@
 # Native Governor metrics
 
-Governor 0.2.8 / ABI4 provides `pig_governor.metrics.GovernorMetrics`.
+Governor 0.2.9 / ABI5 provides `pig_governor.metrics.GovernorMetrics`.
 The minimal SGLang hook initializes it after the native Governor, then publishes
 on the existing approximately one-second active/idle scheduler accounting path.
 `--enable-metrics` is required. SGLang's multiprocess registry owns exposition at
@@ -41,9 +41,9 @@ epoch, revision, filename, user label or per-cell series.
 | `identity_transition` | gauge | none | Admission is paused while the previous runtime identity drains. |
 | `surface_epoch_rotations_total` | counter | none | Completed runtime identity rotations. |
 
-`reason` has exactly nine values, preinitialized to zero: `fit`,
+`reason` has exactly ten values, preinitialized to zero: `fit`,
 `reference_disabled`, `tps_risk`, `cold_prior`, `unknown`, `waiting_limit`,
-`aggregate_tps_risk`, `online_exploration`, `identity_transition`. Normally allowed
+`aggregate_tps_risk`, `online_exploration`, `identity_transition`, `health_check`. Normally allowed
 reasons remain zero; their presence does not imply a rejection occurred.
 No reason label is derived from user input. Prometheus may additionally expose
 the standard counter `_created` samples in single-process mode.

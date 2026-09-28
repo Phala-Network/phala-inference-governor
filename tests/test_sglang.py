@@ -93,6 +93,141 @@ class IntegrationTests(unittest.TestCase):
         self.adapter.admit_request(request, 0)
         return request
 
+    def test_health_result_releases_without_learning_or_spending_exploration(self):
+        core = Governor(50, max_running_requests=1)
+        self.addCleanup(core.close)
+        adapter = SglangGovernor(core, max_running_requests=1)
+        health = SimpleNamespace(
+            rid='health', origin_input_ids=[0],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+            output_ids_through_stop=[1], finished_reason=None,
+            finished=lambda: True,
+        )
+        decision = adapter.admit_request(
+            health, 100, waiting_count=0, is_health_check=True,
+        )
+        self.assertEqual(decision['reason_name'], 'health_check')
+        batch = SimpleNamespace(
+            reqs=[health], launch_ts=100,
+            forward_mode=SimpleNamespace(is_extend_without_speculative=lambda: True),
+        )
+        adapter.after_result(batch, 100.1)
+        adapter.after_result(batch, 100.2)
+        self.assertTrue(health.governor_reservation.released)
+        self.assertIsNone(getattr(health, 'governor_progress', None))
+        self.assertEqual(adapter.outstanding, 0)
+        self.assertEqual(adapter.active, 0)
+        policy = core.snapshot(100.2)
+        self.assertEqual(policy['decode_tokens'], 0)
+        self.assertEqual(policy['decode_sequence_seconds'], 0)
+        self.assertEqual(adapter._last_exploration_at, None)
+        ordinary = SimpleNamespace(
+            rid='ordinary', origin_input_ids=[1],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+        )
+        self.assertEqual(adapter.admit_request(
+            ordinary, 101, waiting_count=0,
+        )['reason_name'], 'online_exploration')
+
+    def test_health_abort_release_is_idempotent_and_identity_drains(self):
+        identity = {'value': {'sha256': 'a' * 64}}
+        adapter = SglangGovernor(
+            self.core, max_running_requests=4,
+            runtime_identity=identity['value'],
+            identity_provider=lambda: identity['value'],
+        )
+        health = SimpleNamespace(
+            rid='health-abort', origin_input_ids=[0],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+        )
+        self.assertTrue(adapter.admit_request(
+            health, 1, is_health_check=True,
+        )['allowed'])
+        old_epoch = self.core.epoch
+        identity['value'] = {'sha256': 'b' * 64}
+        self.assertFalse(adapter.refresh_identity(1.5))
+        self.assertTrue(adapter._admission_paused)
+        self.assertEqual(adapter.outstanding, 1)
+        with patch('pig_governor.sglang.time.monotonic', return_value=2):
+            on_abort_emitted(health)
+            on_abort_emitted(health)
+        self.assertEqual(adapter.outstanding, 0)
+        self.assertEqual(adapter._health_outstanding, 0)
+        self.assertTrue(adapter._health_observation_dirty)
+        cold = self.core.snapshot(2)
+        self.assertEqual(cold['decode_tokens'], 0)
+        self.assertEqual(cold['decode_sequence_seconds'], 0)
+        self.assertTrue(adapter.refresh_identity(2.1))
+        self.assertFalse(adapter._admission_paused)
+        self.assertFalse(adapter._health_observation_dirty)
+        self.assertNotEqual(self.core.epoch, old_epoch)
+        self.assertEqual(adapter.runtime_identity, identity['value'])
+
+    def test_health_waiting_does_not_bias_decode_preference(self):
+        health = SimpleNamespace(
+            rid='health-waiting', origin_input_ids=[0],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+            time_stats=SimpleNamespace(wait_queue_entry_time=1),
+        )
+        self.adapter.admit_request(health, 1, is_health_check=True)
+        business = SimpleNamespace(
+            time_stats=SimpleNamespace(wait_queue_entry_time=9)
+        )
+        with patch.object(self.adapter, 'prefer_decode', return_value=True) as prefer:
+            self.adapter.before_prefill(None, [health, business], health, 10)
+        prefer.assert_called_once_with(
+            10, runnable_decode=False, pending_prefill=True, oldest_ready_age=1,
+        )
+
+    def test_mixed_health_result_quarantines_native_learning_until_clean_batch(self):
+        business = self._request('business')
+        business.output_ids_through_stop = [1]
+        decode_mode = SimpleNamespace(is_extend_without_speculative=lambda: False)
+        prefill_mode = SimpleNamespace(is_extend_without_speculative=lambda: True)
+        self.adapter.after_result(SimpleNamespace(
+            reqs=[business], launch_ts=0, forward_mode=decode_mode,
+        ), 1)
+
+        health = SimpleNamespace(
+            rid='health-mixed', origin_input_ids=[0],
+            sampling_params=SimpleNamespace(max_new_tokens=1),
+            output_ids_through_stop=[], finished_reason=None, done=False,
+        )
+        health.finished = lambda: health.done
+        self.adapter.admit_request(health, 2, is_health_check=True)
+        with patch.object(self.adapter, 'prefill_completed') as prefill:
+            self.adapter.after_result(SimpleNamespace(
+                reqs=[health], launch_ts=2, forward_mode=prefill_mode,
+            ), 2.5)
+            business.output_ids_through_stop = [1, 2, 3, 4, 5]
+            health.output_ids_through_stop = [1]
+            health.done = True
+            self.adapter.after_result(SimpleNamespace(
+                reqs=[business, health], launch_ts=2.5,
+                forward_mode=prefill_mode,
+            ), 3)
+            prefill.assert_not_called()
+
+        self.assertEqual(self.core.snapshot(3)['decode_tokens'], 0)
+        self.assertEqual(self.core.snapshot(3)['decode_sequence_seconds'], 0)
+        self.assertEqual(self.adapter.active, 1)
+        self.assertEqual(self.adapter.outstanding, 1)
+        self.assertTrue(health.governor_reservation.released)
+        self.assertEqual(self.adapter._pending_evidence, {})
+
+        business.output_ids_through_stop = [1, 2, 3, 4, 5, 6]
+        self.adapter.after_result(SimpleNamespace(
+            reqs=[business], launch_ts=3, forward_mode=decode_mode,
+        ), 4)
+        self.assertEqual(self.core.snapshot(4)['decode_sequence_seconds'], 0)
+        business.output_ids_through_stop = [1, 2, 3, 4, 5, 6, 7, 8]
+        self.adapter.after_result(SimpleNamespace(
+            reqs=[business], launch_ts=4, forward_mode=decode_mode,
+        ), 5)
+        recovered = self.core.snapshot(5)
+        self.assertEqual(recovered['decode_tokens'], 2)
+        self.assertEqual(recovered['decode_sequence_seconds'], 1)
+
     def test_native_waiting_rejection_records_reason5_without_reservation(self):
         req = SimpleNamespace(
             rid='native-waiting-limit',

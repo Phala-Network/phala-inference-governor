@@ -21,7 +21,7 @@ PROFILE_PATH_ENV = "PIG_TPS_PROFILE_PATH"
 PROFILE_SHA256_ENV = "PIG_TPS_PROFILE_SHA256"
 MAX_PROFILE_BYTES = 64 * 1024
 PREDICTOR = {
-    "abi_version": 4,
+    "abi_version": 5,
     "surface_schema_version": 1,
     "algorithm": "min-short-2s-long-60s-prior-reprobe-v2",
     "bucket_seconds": 0.5,

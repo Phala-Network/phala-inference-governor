@@ -1,4 +1,4 @@
-//! Version 4 C ABI. The caller owns pointer validity, output storage and handle
+//! Version 5 C ABI. The caller owns pointer validity, output storage and handle
 //! lifetime; never free a handle during another call. Calls on a live handle
 //! serialize internally. All numeric validation precedes committing state.
 //! Request identity, epoch and exactly-once committed deltas belong to Python.
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 pub const OK: i32 = 0;
 pub const INVALID: i32 = 1;
 pub const CONFLICT: i32 = 2;
@@ -20,7 +20,7 @@ pub const ADMISSION_TPS_RISK: u32 = 2;
 pub const ADMISSION_COLD_PRIOR: u32 = 3;
 pub const ADMISSION_UNKNOWN: u32 = 4;
 /// Reserved for the Scheduler-owned post-admit waiting gate. The Rust TPS
-/// predictor never emits this value, but ABI v4 consumers may report it in the
+/// predictor never emits this value, but ABI v5 consumers may report it in the
 /// composed admission decision.
 pub const ADMISSION_WAITING_LIMIT: u32 = 5;
 pub const ADMISSION_AGGREGATE_TPS_RISK: u32 = 6;
@@ -268,6 +268,7 @@ struct State {
     observed: bool,
     active: u64,
     active_run_has_tokens: bool,
+    quarantined: bool,
     revision: u64,
     reference: f64,
     prefill_end: Option<f64>,
@@ -299,6 +300,7 @@ impl State {
             observed: false,
             active: 0,
             active_run_has_tokens: false,
+            quarantined: false,
             revision: 1,
             reference,
             prefill_end: None,
@@ -356,7 +358,7 @@ impl State {
     }
 
     fn advance(&mut self, now: f64) -> Result<()> {
-        self.advance_clock(now, true)
+        self.advance_clock(now, !self.quarantined)
     }
 
     fn advance_clock(&mut self, now: f64, accumulate_active: bool) -> Result<()> {
@@ -422,6 +424,26 @@ impl State {
         self.update_active_run(active_before, active_after, now, delta)?;
         self.active = active_after;
         self.observed = true;
+        Ok(())
+    }
+
+    fn quarantine_in_place(&mut self, now: f64, active_after: u64, enabled: bool) -> Result<()> {
+        if active_after > u64::from(self.max_running_requests) {
+            return Err(INVALID);
+        }
+        self.advance_clock(now, false)?;
+        self.active = active_after;
+        self.active_run_buckets = [EMPTY; BUCKETS];
+        self.active_run_has_tokens = false;
+        self.quarantined = enabled;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn quarantine(&mut self, now: f64, active_after: u64, enabled: bool) -> Result<()> {
+        let mut next = self.clone();
+        next.quarantine_in_place(now, active_after, enabled)?;
+        *self = next;
         Ok(())
     }
 
@@ -613,6 +635,7 @@ impl State {
         self.observed = false;
         self.active = active_after;
         self.active_run_has_tokens = false;
+        self.quarantined = false;
         self.prefill_end = None;
         self.prefill_wall = 0.0;
         self.preference_until = 0.0;
@@ -1071,6 +1094,21 @@ pub unsafe extern "C" fn pig_governor_observe(
         transaction(handle, |state| {
             state.observe_in_place(now, delta, active_after)
         })
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pig_governor_quarantine(
+    handle: *mut Governor,
+    now: f64,
+    active_after: u64,
+    enabled: u32,
+) -> i32 {
+    guarded(|| {
+        if enabled > 1 {
+            return Err(INVALID);
+        }
+        transaction(handle, |state| state.quarantine_in_place(now, active_after, enabled != 0))
     })
 }
 
@@ -1537,6 +1575,48 @@ mod tests {
             assert_eq!(result.reason, ADMISSION_AGGREGATE_TPS_RISK);
             assert_eq!(result.conservative_tps, 1.0);
             assert_eq!(s.snapshot(now + 1.0).unwrap().tokens_60s, 1001 + delta);
+        }
+    }
+
+    #[test]
+    fn quarantine_advances_clock_without_learning_and_preserves_surface() {
+        let mut s = State::new(50.0, 4).unwrap();
+        s.observe(0.0, 0, 1).unwrap();
+        s.observe_batch(1.0, 100, 1.0, 1, 0, 1).unwrap();
+        let before = s.export_profile(1.0, 16).unwrap();
+        assert_eq!(before.len(), 1);
+
+        s.quarantine(1.0, 1, true).unwrap();
+        assert!(!s.active_run_has_tokens);
+        s.admission(2.0, 1, 0).unwrap();
+        let during = s.snapshot(3.0).unwrap();
+        let during_profile = s.export_profile(3.0, 16).unwrap();
+        assert_eq!(during.tokens_60s, 100);
+        assert_eq!(during.sequence_seconds_60s, 1.0);
+        assert_eq!(during_profile.len(), 1);
+        assert_eq!(during_profile[0].long_tokens, before[0].long_tokens);
+        assert_eq!(during_profile[0].long_seconds, before[0].long_seconds);
+
+        s.quarantine(4.0, 1, false).unwrap();
+        let after_gap = s.snapshot(4.0).unwrap();
+        assert_eq!(after_gap.tokens_60s, 100);
+        assert_eq!(after_gap.sequence_seconds_60s, 1.0);
+        s.observe_batch(5.0, 20, 1.0, 1, 0, 1).unwrap();
+        let resumed = s.snapshot(5.0).unwrap();
+        assert_eq!(resumed.tokens_60s, 120);
+        assert_eq!(resumed.sequence_seconds_60s, 2.0);
+    }
+
+    #[test]
+    fn quarantine_ffi_rejects_invalid_mode_without_advancing_clock() {
+        unsafe {
+            let mut h = std::ptr::null_mut();
+            assert_eq!(pig_governor_new(50.0, 1, &mut h), OK);
+            assert_eq!(pig_governor_quarantine(h, 5.0, 0, 2), INVALID);
+            assert_eq!(pig_governor_quarantine(h, 4.0, 0, 1), OK);
+            assert_eq!(pig_governor_quarantine(h, 3.0, 0, 0), INVALID);
+            assert_eq!(pig_governor_quarantine(h, 5.0, 0, 0), OK);
+            assert_eq!(pig_governor_free(h), OK);
         }
     }
 
@@ -2154,7 +2234,7 @@ mod tests {
     fn abi_rejects_nulls_and_bad_creation_without_touching_outputs() {
         unsafe {
             let mut h = std::ptr::null_mut();
-            assert_eq!(pig_governor_abi_version(), 4);
+            assert_eq!(pig_governor_abi_version(), 5);
             assert_eq!(pig_governor_new(-1.0, 4, &mut h), INVALID);
             assert_eq!(pig_governor_new(30.0, 0, &mut h), INVALID);
             assert!(h.is_null());

@@ -148,7 +148,8 @@ class SglangGovernor(SchedulerGovernor):
         self.last_admission = None
         self._pending_runtime_identity = None
 
-    def admit_request(self, req, now, *, is_retracted=False, waiting_count=None):
+    def admit_request(self, req, now, *, is_retracted=False, waiting_count=None,
+                      is_health_check=False):
         with self._policy_lock:
             self.refresh_identity(now)
             reused = getattr(req, "governor_reservation", None) is not None
@@ -157,6 +158,7 @@ class SglangGovernor(SchedulerGovernor):
                 now,
                 is_retracted=is_retracted,
                 waiting_count=waiting_count,
+                is_health_check=is_health_check,
             )
             self.admission_attempts += 1
             if reused:
@@ -257,6 +259,7 @@ class SglangGovernor(SchedulerGovernor):
             self.loaded_profile = None
             self._pending_evidence = {}
             self._surface_time = now
+            self._health_observation_dirty = False
             self.last_admission = None
             self.surface_epoch_rotations += 1
             self.last_identity_change = {
@@ -382,10 +385,21 @@ class SglangGovernor(SchedulerGovernor):
         self.refresh_identity(now)
         updates = []
         terminal_requests = []
+        contaminated = bool(self._health_outstanding or self._health_observation_dirty)
         for req in batch.reqs:
+            reservation = getattr(req, "governor_reservation", None)
+            if reservation is not None and reservation.health_check:
+                if reservation.owner is not self:
+                    raise RuntimeError("Request belongs to a different Governor owner")
+                contaminated = True
+                if reservation.released:
+                    continue
+                if req.finished() or type(req.finished_reason).__name__ == "FINISH_ABORT":
+                    terminal_requests.append(req)
+                continue
             if (
                 getattr(req, "governor_progress", None) is None
-                and getattr(req, "governor_reservation", None) is None
+                and reservation is None
             ):
                 if (
                     getattr(req, "is_prefill_only", False)
@@ -402,14 +416,17 @@ class SglangGovernor(SchedulerGovernor):
             updates.append((progress, output_tokens, terminal, progress.pressure_class))
             if terminal:
                 terminal_requests.append(req)
-        if updates:
-            self.commit_batch(updates, now)
+        if updates or contaminated:
+            self.commit_batch(updates, now, quarantine=contaminated)
         for req in terminal_requests:
             self.release_request(req)
-        if batch.forward_mode.is_extend_without_speculative():
+        if batch.forward_mode.is_extend_without_speculative() and not contaminated:
             self.prefill_completed(batch.launch_ts, now)
 
     def before_prefill(self, running, waiting, chunked, now):
+        waiting = [req for req in waiting if not self._is_health_check(req)]
+        if chunked is not None and self._is_health_check(chunked):
+            chunked = None
         oldest_ready = None
         for req in waiting:
             ready_at = req.time_stats.wait_queue_entry_time
@@ -420,10 +437,18 @@ class SglangGovernor(SchedulerGovernor):
             if oldest_ready is None or ready_at < oldest_ready:
                 oldest_ready = ready_at
         age = max(0, now - oldest_ready) if oldest_ready is not None else 0
-        runnable = bool(running and not running.is_empty() and not running.is_prefill_only)
+        runnable = bool(
+            running and not running.is_empty() and not running.is_prefill_only
+            and any(not self._is_health_check(req) for req in running.reqs)
+        )
         return self.prefer_decode(now, runnable_decode=runnable,
                                   pending_prefill=bool(waiting or chunked is not None),
                                   oldest_ready_age=age)
+
+    @staticmethod
+    def _is_health_check(req):
+        reservation = getattr(req, "governor_reservation", None)
+        return bool(reservation is not None and reservation.health_check)
 
 
 def on_abort_emitted(req):

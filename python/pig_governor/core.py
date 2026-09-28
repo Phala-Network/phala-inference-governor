@@ -108,8 +108,8 @@ class Governor:
         except AttributeError:
             raise RuntimeError("Governor library does not expose an ABI version") from None
         abi_version.argtypes, abi_version.restype = [], C.c_uint32
-        if abi_version() != 4:
-            raise RuntimeError("Unsupported Governor ABI: expected version 4")
+        if abi_version() != 5:
+            raise RuntimeError("Unsupported Governor ABI: expected version 5")
         definitions = {
             "new": ([C.c_double, C.c_uint32, C.POINTER(C.c_void_p)], C.c_int32),
             "new_with_profile": (
@@ -119,6 +119,9 @@ class Governor:
             ),
             "free": ([C.c_void_p], C.c_int32),
             "observe": ([C.c_void_p, C.c_double, C.c_uint64, C.c_uint64], C.c_int32),
+            "quarantine": (
+                [C.c_void_p, C.c_double, C.c_uint64, C.c_uint32], C.c_int32
+            ),
             "observe_surface": (
                 [C.c_void_p, C.c_double, C.c_uint64, C.c_double,
                  C.c_uint32, C.c_uint32],
@@ -162,7 +165,7 @@ class Governor:
                 function = getattr(self._lib, symbol)
             except AttributeError:
                 raise RuntimeError(
-                    "Governor ABI v4 library is missing symbol: " + symbol
+                    "Governor ABI v5 library is missing symbol: " + symbol
                 ) from None
             function.argtypes, function.restype = arguments, result
             self._functions[name] = function
@@ -236,6 +239,11 @@ class Governor:
 
     def observe(self, now, committed_decode_delta, active_after):
         self._call("observe", _finite(now), _integer(committed_decode_delta), _integer(active_after))
+
+    def quarantine(self, now, active_after, enabled):
+        if type(enabled) is not bool:
+            raise ValueError("Quarantine flag must be boolean")
+        self._call("quarantine", _finite(now), _integer(active_after), int(enabled))
 
     def observe_surface(self, now, committed_decode_delta, sequence_seconds,
                         concurrency, pressure_class):
@@ -328,7 +336,7 @@ class Governor:
         result = Snapshot()
         with self._lock:
             self._call("snapshot", now, C.byref(result))
-            if result.abi_version != 4:
+            if result.abi_version != 5:
                 raise RuntimeError("Incompatible snapshot ABI")
             epoch = self.epoch
             profile_cell_count = (
@@ -369,7 +377,7 @@ class Governor:
                 _pressure_class(pressure_class),
                 C.byref(result),
             ))
-        if result.abi_version != 4:
+        if result.abi_version != 5:
             raise RuntimeError("Incompatible admission ABI")
         evidence_source = (
             "aggregate_live"

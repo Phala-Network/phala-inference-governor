@@ -29,7 +29,8 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.8` uses C ABI v4. Online learning starts with the resolved
+Component `0.2.9` uses C ABI v5. The Python adapter requires the ABI v5
+`quarantine` symbol and rejects older libraries. Online learning starts with the resolved
 SGLang settings and a positive TPS reference; it does not need a precomputed
 model profile or manually supplied artifact/hardware identifiers:
 
@@ -39,7 +40,7 @@ PIG_GOVERNOR_LIBRARY=/absolute/image/path/libpig_governor_core.so
 PIG_TPS_REFERENCE=50
 ```
 
-An existing v1 response-surface profile may be supplied with both
+A v1 response-surface profile produced for ABI v5 may be supplied with both
 `PIG_TPS_PROFILE_PATH` and `PIG_TPS_PROFILE_SHA256` as an optional startup prior.
 That explicit path retains strict commit, artifact, hardware, predictor, expiry,
 SHA-256 and resolved-runtime validation. Two absent or empty profile variables

@@ -11,12 +11,13 @@
 #define PIG_GOVERNOR_ADMISSION_AGGREGATE_TPS_RISK 6u
 #define PIG_GOVERNOR_ADMISSION_ONLINE_EXPLORATION 7u
 #define PIG_GOVERNOR_ADMISSION_IDENTITY_TRANSITION 8u
+#define PIG_GOVERNOR_ADMISSION_HEALTH_CHECK 9u
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* ABI v4: caller provides valid pointers; free must not race another call.
+/* ABI v5: caller provides valid pointers; free must not race another call.
  * Status: 0 success, 1 invalid input, 2 revision conflict, 3 internal failure.
  * Outputs and state remain unchanged on invalid input or revision conflict.
  * new starts revision at 1 and receives the native max running request bound.
@@ -24,7 +25,7 @@ extern "C" {
  * Buckets quantize the oldest window edge by less than 0.5 seconds.
  * Python owns epoch checks, request lifecycle and exactly-once Decode deltas.
  * Snapshot/choose and observe_batch accrue aggregate time from the preceding
- * active count. observe_batch uses explicit sequence-seconds only for the
+ * active count outside quarantine. observe_batch uses explicit sequence-seconds only for the
  * response-surface cell, so an intervening snapshot cannot double-count time.
  * choose output: 0 native, 1 bounded Decode preference (never admission).
  * observe_surface records one real Decode cell before state transition.
@@ -93,6 +94,14 @@ int32_t pig_governor_new_with_profile(
 int32_t pig_governor_free(PigGovernor *handle);
 int32_t pig_governor_observe(PigGovernor *handle, double now, uint64_t delta,
                            uint64_t active_after);
+/* enabled is 0 or 1. Advance the clock and set active_after without recording
+ * tokens or exposure. While enabled, all reads/admissions also advance without
+ * exposure. Clear only private active-run evidence; retain qualified surface
+ * history. End with enabled=0 after the contaminated interval. Surface epoch
+ * rotation clears quarantine independently.
+ */
+int32_t pig_governor_quarantine(PigGovernor *handle, double now,
+                                uint64_t active_after, uint32_t enabled);
 int32_t pig_governor_observe_surface(PigGovernor *handle, double now,
                                       uint64_t delta, double sequence_seconds,
                                       uint32_t concurrency,
@@ -102,7 +111,7 @@ int32_t pig_governor_observe_batch(PigGovernor *handle, double now,
                                   uint32_t concurrency,
                                   uint32_t pressure_class,
                                   uint64_t active_after);
-/* Additive ABI-v4 extension required by the matching Python adapter.
+/* Replacement observation retained in ABI v5 for the matching Python adapter.
  * Every prior active request must have retired (caller owns identities).
  * delta includes only retiring-set tokens with positive sequence_seconds;
  * zero sequence_seconds requires delta == 0. Entrant tokens are deferred.
