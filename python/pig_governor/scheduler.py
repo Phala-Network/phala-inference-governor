@@ -205,7 +205,10 @@ class SchedulerGovernor:
                 )
             except Exception:
                 if health_fits:
-                    self.core.quarantine(now, self.active, False)
+                    self.core.quarantine(
+                        now, self.active,
+                        bool(self._health_outstanding or self._health_observation_dirty),
+                    )
                 raise
             if self._admission_paused:
                 decision.update(

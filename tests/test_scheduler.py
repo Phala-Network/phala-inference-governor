@@ -161,6 +161,37 @@ class LifecycleTests(unittest.TestCase):
         )["reason_name"], "identity_transition")
         self.assertEqual(adapter.outstanding, 0)
 
+    def test_failed_health_admission_preserves_existing_quarantine(self):
+        class FailingCore(Core):
+            fail_admit = False
+
+            def admit(self, now, projected_concurrency, pressure_class):
+                if self.fail_admit:
+                    raise RuntimeError("native admission failed")
+                return super().admit(now, projected_concurrency, pressure_class)
+
+        for release_first in (False, True):
+            with self.subTest(release_first=release_first):
+                core = FailingCore()
+                adapter = SchedulerGovernor(core, max_running_requests=2)
+                health = request("health", input_tokens=1, max_new_tokens=1)
+                adapter.admit_request(health, 1, is_health_check=True)
+                if release_first:
+                    adapter.release_request(health)
+                failed = request("failed", input_tokens=1, max_new_tokens=1)
+                before = adapter.outstanding
+                core.fail_admit = True
+                with self.assertRaisesRegex(RuntimeError, "native admission failed"):
+                    adapter.admit_request(failed, 2, is_health_check=True)
+                self.assertEqual(adapter.outstanding, before)
+                self.assertEqual(adapter._health_outstanding, int(not release_first))
+                self.assertTrue(adapter._health_observation_dirty)
+                self.assertFalse(hasattr(failed, "governor_reservation"))
+                self.assertEqual(core.rows[-2:], [
+                    ("quarantine", 2, 0, True),
+                    ("quarantine", 2, 0, True),
+                ])
+
     def test_mixed_health_gap_quarantines_pending_and_resumes_clean_interval(self):
         core = Core()
         adapter = SchedulerGovernor(core, max_running_requests=4)

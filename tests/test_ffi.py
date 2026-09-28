@@ -2,9 +2,11 @@
 import ctypes as C
 import os
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 from pig_governor import Governor, RevisionConflict
 from pig_governor.core import ProfileCellV1
+from pig_governor.scheduler import Progress, SchedulerGovernor
 import pig_governor.core as core_module
 
 
@@ -88,6 +90,32 @@ class NativeAbiTests(unittest.TestCase):
         resumed = self.core.snapshot(5)
         self.assertEqual(resumed['decode_tokens'], 120)
         self.assertEqual(resumed['decode_sequence_seconds'], 2)
+
+    def test_failed_health_admission_keeps_native_quarantine(self):
+        for release_first in (False, True):
+            with self.subTest(release_first=release_first):
+                core = Governor(35, max_running_requests=2)
+                self.addCleanup(core.close)
+                adapter = SchedulerGovernor(core, max_running_requests=2)
+                adapter.commit_batch([(Progress(), 1, False, 0)], 0)
+                health = SimpleNamespace(
+                    origin_input_ids=[0],
+                    sampling_params=SimpleNamespace(max_new_tokens=1),
+                )
+                self.assertTrue(adapter.admit_request(
+                    health, 1, is_health_check=True,
+                )["allowed"])
+                if release_first:
+                    adapter.release_request(health)
+                failed = SimpleNamespace(
+                    origin_input_ids=[0],
+                    sampling_params=SimpleNamespace(max_new_tokens=1),
+                )
+                with mock.patch.object(core, "admit", side_effect=RuntimeError("admit failed")):
+                    with self.assertRaisesRegex(RuntimeError, "admit failed"):
+                        adapter.admit_request(failed, 2, is_health_check=True)
+                self.assertFalse(hasattr(failed, "governor_reservation"))
+                self.assertEqual(core.snapshot(3)["decode_sequence_seconds"], 0)
 
     def test_real_ffi_window_and_reference_cas_contract(self):
         self.core.observe(0, 0, 2)
