@@ -29,7 +29,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.7` uses C ABI v4. Online learning starts with the resolved
+Component `0.2.8` uses C ABI v4. Online learning starts with the resolved
 SGLang settings and a positive TPS reference; it does not need a precomputed
 model profile or manually supplied artifact/hardware identifiers:
 

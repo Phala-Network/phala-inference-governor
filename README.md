@@ -29,7 +29,7 @@ not install SGLang or its engine hooks.
 
 Use the complete [Phala SGLang source](https://github.com/Phala-Network/sglang)
 and a compatible Governor component. Current package metadata identifies
-**0.2.7 / C ABI v4**; this identifies source, not universal image qualification.
+**0.2.8 / C ABI v4**; this identifies source, not universal image qualification.
 Enable Governor explicitly in an image containing the native library:
 
 ```bash
@@ -56,6 +56,8 @@ authentication and profile semantics.
   `expected_epoch` and `expected_revision`.
 - `GET /admin/v1/predictive-profile?expected_epoch=...`: epoch-checked profile
   availability/export. Online mode does not fabricate a reusable static profile.
+- Governor telemetry is published through SGLang `/metrics`, forwarded by TAIL
+  at authenticated `/v1/metrics`. See the [metric contract](docs/METRICS.md).
 
 These endpoints belong to the integrated SGLang service, not a standalone
 Governor server. A zero TPS reference is explicit sampling mode;

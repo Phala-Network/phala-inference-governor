@@ -16,7 +16,7 @@
   },
   "component": {
     "repository": "https://github.com/Phala-Network/phala-inference-governor",
-    "version": "0.2.5",
+    "version": "0.2.8",
     "abi_version": 4
   },
   "patches": [
@@ -36,6 +36,32 @@
         "commit": "e02dfa1256c5d7d6e8b731d439229d5aca72cbe5",
         "tree": "ae0e7307e3dcf2314b7eb51e26a17207073e0f0a",
         "status": "assembled_cpu_overlay_pending"
+      }
+    },
+    {
+      "path": "0002-governor-metrics.patch",
+      "changed_files": [
+        "python/sglang/srt/managers/scheduler_components/metrics_reporter.py",
+        "test/registered/unit/observability/test_governor_metrics.py"
+      ],
+      "sha256": "0d1f23849f9ce82fb7585a4004c7e47b3d1abd99282f57dd7618cac63264e60a",
+      "requires_component_version": "0.2.8",
+      "source": {
+        "repository": "https://github.com/Phala-Network/sglang",
+        "parent": "181598031ce692094006eca0bbdba0e356c7f713",
+        "commit": "b882282d7c5d908a9d2e962d3667052a4a0d0ba2",
+        "tree": "9f3fb3d7bef079f9fe025f8ae6b20cb6da5e6bad",
+        "status": "cpu_fixture_verified_final_image_pending"
+      },
+      "ordering": "Apply to the completed P2/P3 engine after intervening serving and Governor increments. P3 NIXL alignment must be retained.",
+      "validation": {
+        "date": "2026-09-28",
+        "builder": "10.80.10.201",
+        "shared_metrics_tests": 44,
+        "native_admission_http_fixture": true,
+        "p3_apply_check": true,
+        "final_image_acceptance": false,
+        "production_acceptance": false
       }
     }
   ],

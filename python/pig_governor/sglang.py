@@ -220,6 +220,19 @@ class SglangGovernor(SchedulerGovernor):
                 "last_identity_change": self.last_identity_change,
             }
 
+    def telemetry_snapshot(self, now, *, waiting_count=None):
+        """Read one bounded, consistent metrics sample without refreshing identity."""
+        with self._policy_lock:
+            policy = super().policy_snapshot(now)
+            return {
+                "policy": policy,
+                "admission": self.admission_snapshot(waiting_count=waiting_count),
+                "online_cells_qualified": (
+                    0 if self._admission_paused else len(self.core.export_profile(now))
+                ),
+                "identity_transition": self._admission_paused,
+            }
+
     def refresh_identity(self, now):
         with self._policy_lock:
             if self._identity_provider is None:

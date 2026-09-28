@@ -2,6 +2,7 @@
 
 - [Build and overview](../README.md)
 - [Integration, online learning and policy API](INTEGRATION.md)
+- [Native Prometheus metric contract](METRICS.md)
 - [Repository responsibilities](REPOSITORY_BOUNDARY.md)
 - [Component validation probe](../scripts/README.md)
 - [Minimal historical hooks](../patches/sglang/v0.5.20/README.md)

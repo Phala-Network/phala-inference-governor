@@ -45,3 +45,19 @@ The exact v3 hook bytes and manifest are retained under [history/v3](history/v3)
 and bound by the [frozen v3 provenance record](../../../docs/V3_FROZEN_PROVENANCE.md).
 Do not apply v3 and v4 hooks together. Runtime images are built from the complete
 Phala-Network/sglang source and published only to `ghcr.io/phala-network/sglang`.
+
+## Native telemetry increment
+
+`0002-governor-metrics.patch` adds only the scheduler reporter's periodic native
+telemetry hook and its CPU regressions. It requires Governor 0.2.8 / ABI4 and
+targets the completed P2 engine `181598031ce692094006eca0bbdba0e356c7f713`.
+It also passes an application check against P3
+`133c73fa3d0d45f642762b54a21cc617e61ac16d`; final integration must retain P3's
+NIXL changes. Apply after the intervening serving/Governor increments, rather
+than directly after this directory's historical `0001` snapshot.
+
+The telemetry candidate commit is
+`b882282d7c5d908a9d2e962d3667052a4a0d0ba2`; the unified-image owner combines it
+with current shared patches before freezing the complete engine. See the
+[metric contract](../../../docs/METRICS.md). CPU/HTTP fixtures passed on the
+authorized builder; final image and production visibility remain separate gates.
