@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     container:
-      image: ghcr.io/phala-network/sglang:dev-d752488ed6-gov-fa79d6d753-recipe-6af26b8@sha256:1f5377e5007d7361fd0ce478d1e2c22e13c48d0114be513fac34a53a98a34a9a
+      image: ghcr.io/phala-network/sglang@sha256:ea264a4413d141916e58dd75018621a186f9df138d8670fc72b573bc597ab610
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -75,14 +75,14 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang
-          ref: 181598031ce692094006eca0bbdba0e356c7f713
+          ref: 14fad544cd9606f5460ca54ef4a3f8ed1e799b8d
           path: sglang-complete
           persist-credentials: false
       - name: Checkout compatible serving patches
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Phala-Network/sglang-serving-patches
-          ref: b97e28aefb6b2e5a77f7921a6ab9d06b94a51395
+          ref: 98403b1609143c8fb2c50680708c6862677670c6
           path: serving-patches
           persist-credentials: false
       - uses: actions/download-artifact@v4
@@ -93,10 +93,10 @@ jobs:
         shell: bash
         run: |
           engine_dir="$GITHUB_WORKSPACE/sglang-complete"
-          engine=181598031ce692094006eca0bbdba0e356c7f713
-          engine_tree=5cca977d5fb72bc0b7ad7b8ffb3daeeaeb280e11
-          serving_patches=b97e28aefb6b2e5a77f7921a6ab9d06b94a51395
-          serving_patches_tree=f75615d81f43f08f184f1f843f3afe64976badf9
+          engine=14fad544cd9606f5460ca54ef4a3f8ed1e799b8d
+          engine_tree=453e9702a734a68dce61ca3043c0cc23a1176c5e
+          serving_patches=98403b1609143c8fb2c50680708c6862677670c6
+          serving_patches_tree=4174280c79ca09cabdd65628d70402ea7d264ece
           test "$(git -C "$engine_dir" rev-parse HEAD)" = "$engine"
           test "$(git -C "$engine_dir" rev-parse HEAD^{tree})" = "$engine_tree"
           test "$(git -C "$GITHUB_WORKSPACE/serving-patches" rev-parse HEAD)" = "$serving_patches"
