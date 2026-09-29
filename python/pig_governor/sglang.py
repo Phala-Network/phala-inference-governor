@@ -14,6 +14,7 @@ from sglang.srt.runtime_context import (
     get_schedule,
 )
 from .core import Governor, RevisionConflict
+from .diagnostics import AdmissionDiagnostics
 from .identity import (
     IDENTITY_SCHEMA, RESOLVED_RUNTIME_FIELDS, build_online_runtime_identity,
     build_runtime_identity,
@@ -147,6 +148,7 @@ class SglangGovernor(SchedulerGovernor):
         self.admission_reject_reasons = {}
         self.last_admission = None
         self._pending_runtime_identity = None
+        self._admission_diagnostics = AdmissionDiagnostics.from_environment()
 
     def admit_request(self, req, now, *, is_retracted=False, waiting_count=None,
                       is_health_check=False):
@@ -180,6 +182,13 @@ class SglangGovernor(SchedulerGovernor):
                     ),
                 )
             self.last_admission = result
+            if self._admission_diagnostics is not None:
+                self._admission_diagnostics.record(
+                    req, result, now, epoch=self.core.epoch,
+                    outstanding=self.outstanding, active=self.active,
+                    waiting_count=waiting_count, reused=reused,
+                    health_check=is_health_check,
+                )
             return result
 
     def admission_snapshot(self, *, waiting_count=None):
@@ -220,6 +229,10 @@ class SglangGovernor(SchedulerGovernor):
                     else self.runtime_identity["sha256"]
                 ),
                 "last_identity_change": self.last_identity_change,
+                "diagnostics": (
+                    None if self._admission_diagnostics is None
+                    else self._admission_diagnostics.snapshot()
+                ),
             }
 
     def telemetry_snapshot(self, now, *, waiting_count=None):

@@ -29,7 +29,7 @@ not install SGLang or its engine hooks.
 
 Use the complete [Phala SGLang source](https://github.com/Phala-Network/sglang)
 and a compatible Governor component. Current package metadata identifies
-**0.2.9 / C ABI v5**; this identifies source, not universal image qualification.
+**0.2.10 / C ABI v5**; this identifies source, not universal image qualification.
 Enable Governor explicitly in an image containing the native library:
 
 ```bash
@@ -71,6 +71,7 @@ identify releases. Combined serving images belong to `ghcr.io/phala-network/sgla
 Select a release with a matching engine, component and image receipt.
 
 - [Contributing and checks](CONTRIBUTING.md)
+- [Idle recovery and bounded diagnostics](docs/ADMISSION_DIAGNOSTICS.md)
 - [Documentation map](docs/README.md)
 - [Repository responsibilities](docs/REPOSITORY_BOUNDARY.md)
 - [Release policy](docs/RELEASING.md)

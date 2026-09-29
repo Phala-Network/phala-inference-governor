@@ -54,6 +54,7 @@ class NativeSchedulerTests(unittest.TestCase):
         # request has not entered Decode and therefore has no Governor state.
         handle = CacheRequestHandle(rid='queued', attempt_id=1)
         req = SimpleNamespace(rid='queued', multimodal_inputs=Mock(), session=None,
+            is_internal_health_check=False,
             kv=SimpleNamespace(holds_mamba=False), weight_version_events=[], output_ids=[],
             cache_request_handle=handle)
         mm = req.multimodal_inputs
@@ -165,6 +166,7 @@ class GovernorHookTests(unittest.TestCase):
 
     def _generate_input(self):
         return SimpleNamespace(
+            is_internal_health_check=False,
             rid='request', session_params=None, session_id=None, bootstrap_port=1,
             input_embeds=None, input_text='', input_ids=array('q', [1]),
             sampling_params=SimpleNamespace(), return_logprob=False,
@@ -184,6 +186,7 @@ class GovernorHookTests(unittest.TestCase):
 
     def _embedding_input(self):
         return SimpleNamespace(
+            is_internal_health_check=False,
             rid='embedding', input_text='', input_ids=array('q', [1]),
             sampling_params=SimpleNamespace(), positional_embed_overrides=None,
             token_type_ids=None, routed_dp_rank=None, priority=None,
@@ -255,6 +258,7 @@ class GovernorHookTests(unittest.TestCase):
         sched.processed_tokens_counter = 0
         req = SimpleNamespace(
             rid='admitted', origin_input_ids=array('q', [1]),
+            is_internal_health_check=False,
             sampling_params=SimpleNamespace(max_new_tokens=1, top_k=1),
             return_sampling_mask=False, return_logprob=False,
             logprob_start_len=-1, is_prefill_only=False,
@@ -434,6 +438,7 @@ class GovernorHookTests(unittest.TestCase):
         governor = SglangGovernor(core, max_running_requests=43)
         req = SimpleNamespace(
             rid='queued',
+            is_internal_health_check=False,
             origin_input_ids=[1],
             sampling_params=SimpleNamespace(max_new_tokens=1),
             finished=lambda: False,
@@ -470,7 +475,7 @@ class GovernorHookTests(unittest.TestCase):
                     )
                 )
                 sched.governor = SimpleNamespace(
-                    admit_request=lambda req, now, waiting_count: {
+                    admit_request=lambda req, now, waiting_count, is_health_check: {
                         'allowed': False,
                         'reason': reason,
                         'reason_name': reason_name,
@@ -520,15 +525,18 @@ class GovernorHookTests(unittest.TestCase):
         sched.chunked_req = object()
         captured = {}
 
-        def admit_request(req, now, *, waiting_count):
+        def admit_request(req, now, *, waiting_count, is_health_check):
             captured["waiting_count"] = waiting_count
+            captured["is_health_check"] = is_health_check
             return {"allowed": True}
 
         sched.governor = SimpleNamespace(admit_request=admit_request)
         self.assertFalse(
-            sched._abort_on_governor_admission(SimpleNamespace(rid="candidate"))
+            sched._abort_on_governor_admission(SimpleNamespace(
+                rid="candidate", is_internal_health_check=False))
         )
         self.assertEqual(captured["waiting_count"], 4)
+        self.assertIs(captured["is_health_check"], False)
 
 
 if __name__ == '__main__': unittest.main()

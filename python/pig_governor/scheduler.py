@@ -91,21 +91,55 @@ class SchedulerGovernor:
 
     def _exploration_allowed(self, now, projected_concurrency, pressure_class,
                              waiting_count, outstanding_after):
-        if (not self.online_exploration or self._exploration_active
-                or outstanding_after > self.max_running
-                or waiting_count not in (None, 0)
-                or (waiting_count is None and self.outstanding != 0)
-                or (self._last_exploration_at is not None
-                    and now - self._last_exploration_at < EXPLORATION_INTERVAL_SECONDS)):
-            return False
+        return self._exploration_blocker(
+            now, projected_concurrency, pressure_class,
+            waiting_count, outstanding_after) is None
+
+    def _exploration_blocker(self, now, projected_concurrency, pressure_class,
+                             waiting_count, outstanding_after):
+        if not self.online_exploration:
+            return "disabled"
+        if self._exploration_active:
+            return "active"
+        if outstanding_after > self.max_running:
+            return "capacity"
+        if waiting_count not in (None, 0):
+            return "waiting"
+        if waiting_count is None and self.outstanding != 0:
+            return "outstanding"
+        if (self._last_exploration_at is not None
+                and now - self._last_exploration_at < EXPLORATION_INTERVAL_SECONDS):
+            return "cooldown"
         if projected_concurrency == 1:
-            return self.outstanding == 0
+            return None if self.outstanding == 0 else "outstanding"
         if projected_concurrency != self.outstanding + 1:
-            return False
+            return "projection"
         lower = self.core.admit(now, projected_concurrency - 1, pressure_class)
-        return (lower["allowed"] and lower.get("observed") is True
-                and lower["projected_tps"]
-                >= lower["reference"] * EXPLORATION_HEADROOM)
+        if not lower["allowed"]:
+            return "lower_risk"
+        if lower.get("observed") is not True:
+            return "lower_unobserved"
+        if lower["projected_tps"] < lower["reference"] * EXPLORATION_HEADROOM:
+            return "lower_headroom"
+        return None
+
+    def _idle_recovery_blocker(self, decision, now, projected_concurrency,
+                               pressure_class, waiting_count, outstanding_after):
+        # A retired slow cell cannot produce fresh evidence while refusing all
+        # work. Reprobe only after full native drain and a quiet interval. Keep
+        # its measured low bound: this is exploration, never a fabricated fit.
+        if self.outstanding or self.active:
+            return "busy"
+        if self._health_outstanding or self._health_observation_dirty:
+            return "health"
+        if decision.get("observed") is not True:
+            return "unobserved"
+        if (self._surface_time is None
+                or now - self._surface_time < EXPLORATION_INTERVAL_SECONDS):
+            return "recent_evidence"
+        return self._exploration_blocker(
+            now, projected_concurrency, pressure_class,
+            waiting_count, outstanding_after)
 
     @property
     def native_max_running_requests(self):
@@ -210,6 +244,11 @@ class SchedulerGovernor:
                         bool(self._health_outstanding or self._health_observation_dirty),
                     )
                 raise
+            decision.update(
+                original_reason=decision.get("reason"),
+                original_evidence_source=decision.get("evidence_source", "none"),
+                exploration_blocker="not_applicable",
+            )
             if self._admission_paused:
                 decision.update(
                     allowed=False, reason=ADMISSION_REASON_IDENTITY_TRANSITION,
@@ -220,15 +259,24 @@ class SchedulerGovernor:
                     allowed=True, reason=ADMISSION_REASON_HEALTH_CHECK,
                     evidence_source="internal_health",
                 )
-            elif (decision.get("reason") == 4
-                    and self._exploration_allowed(
+            elif decision.get("reason") in (2, 4):
+                recovery = decision["reason"] == 2
+                blocker = (
+                    self._idle_recovery_blocker(
+                        decision, now, projected_concurrency, projected_pressure,
+                        waiting_count, outstanding_after)
+                    if recovery else self._exploration_blocker(
                         now, projected_concurrency, projected_pressure,
-                        waiting_count, outstanding_after,
-                    )):
-                decision.update(
-                    allowed=True, reason=ADMISSION_REASON_ONLINE_EXPLORATION,
-                    evidence_source="online_exploration",
+                        waiting_count, outstanding_after)
                 )
+                decision["exploration_blocker"] = blocker
+                if blocker is None:
+                    decision.update(
+                        allowed=True, reason=ADMISSION_REASON_ONLINE_EXPLORATION,
+                        evidence_source="online_exploration",
+                    )
+                    if recovery:
+                        decision["recovery_probe"] = True
             reason = decision.get("reason")
             if reason not in ADMISSION_REASON_NAMES:
                 raise RuntimeError("Governor returned an unknown admission reason")

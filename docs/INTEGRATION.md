@@ -29,7 +29,7 @@ topology fails during opt-in initialization. Broader topology and radix-disabled
 `input_embeds` remain unqualified.
 
 Build the Rust cdylib and install the Python package into the runtime image.
-Component `0.2.9` uses C ABI v5. The Python adapter requires the ABI v5
+Component `0.2.10` uses C ABI v5. The Python adapter requires the ABI v5
 `quarantine` symbol and rejects older libraries. Online learning starts with the resolved
 SGLang settings and a positive TPS reference; it does not need a precomputed
 model profile or manually supplied artifact/hardware identifiers:
